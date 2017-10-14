@@ -341,3 +341,28 @@ void YV12Render::Render(PaintStruct* ptr_paint_struct, QOpenGLFunctions* ft)
 //    ptr_texture2_->bind(1);
 //    shader_program_->setUniformValue("testTexture2", 1);
 //}
+
+qreal DistanceBetweenHSV(QColor hsv1, QColor hsv2)
+{
+	double angle = 30;
+	double border = 255;
+	double r = qSin(qDegreesToRadians(angle)) * border;
+	double height = qCos(qDegreesToRadians(angle)) * border;
+
+	double r1 = hsv1.saturation() / 255.0 * r;
+	double r2 = hsv2.saturation() / 255.0 * r;
+
+	double x1 = r1 * qCos(qDegreesToRadians((double)hsv1.hsvHue()));
+	double y1 = r1 * qSin(qDegreesToRadians((double)hsv1.hsvHue()));
+	double z1 = hsv1.value() / 255.0 * height;
+
+	double x2 = r2 * qCos(qDegreesToRadians((double)hsv2.hsvHue()));
+	double y2 = r2 * qSin(qDegreesToRadians((double)hsv2.hsvHue()));
+	double z2 = hsv2.value() / 255.0 * height;
+
+	double dx = x1 - x2;
+	double dy = y1 - y2;
+	double dz = z1 - z2;
+
+	return qSqrt(dx * dx + dy * dy + dz * dz) / border;
+}
