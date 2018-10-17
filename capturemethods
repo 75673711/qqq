@@ -1,0 +1,28 @@
+【Reprint】 http://www.virtualdub.org/blog/pivot/entry.php?id=356
+Screen recording with WDDM 1.2
+While browsing through some of the changes to the Windows 8 Developer Preview, I happened upon the list of improvements in DXGI 1.2. I have to say, the list looks pretty good. After fixing the most glaring problems with the transition to WDDM and DWM -- memory usage and unaccelerated GDI rendering -- Microsoft has started evolving DXGI further, and there's some good stuff here.
+
+Especially desktop duplication.
+
+Formerly, the options for doing screen recording in Windows weren't that great. These were the options I knew of:
+
+Call GetDC(NULL) to get a screen HDC and BitBlt() back to system memory. Simple, easy, and reliable. Unfortunately, also slooooooooooowww, as you couldn't get more than a postage stamp at decent frame rates. It also caused the whole system to chug quite a bit. This method improved substantially in performance starting with Windows Vista but still could not handle full screen + full frame rate.
+Call Direct3D's GetFrontBufferData() function. Or not, since it uses both an unaccelerated readback and an unoptimized blit routine to give abysmal performance. The docs warn that the function is slow, but they're an understatement, trust me.
+Use a mirror display driver to intercept drawing commands. This allowed for very fast, low bandwidth capture as the drawing primitive stream could be captured and was a popular method for remoting applications. The main downsides were the need to write a kernel driver, inability to handle 3D applications, and disabling desktop composition starting with Vista. I believe this method is now completely dead with Windows 8 now that XPDM support is gone.
+Use a OpenGL front buffer hack to read the screen. This is the fast path I have in VirtualDub and is very fast, since it allows the screen to be preprocessed on the GPU before the slow read back. The disadvantages are that it's unreliable on some OpenGL drivers and no longer works at all with WDDM due to front buffer redirection.
+Hook Direct3D and intercept Present() to do the capture. Not a general solution, but allows for full hardware acceleration of capture and is a popular solution for capturing full screen games. I believe this is also possible with DWM to grab the desktop, although I haven't heard if someone's tried it and it involves evil system process injection hacking in that case.
+To sum it up, there were no good global solutions on Windows XP, and only one decent one on Windows Vista and up. Well, desktop duplication in WDDM 1.2 finally has a good option. The process for capturing the desktop with the new APIs is surprisingly simple:
+
+Create a Direct3D 11.1 device. (Maybe earlier works too -- I haven't tried. I'm not sure there's a reason to use a D3D10/10.1/11 device anyway.)
+Find the IDXGIOutput you want to duplicate, and call DuplicateOutput() to get an IDXGIOutputDuplication interface.
+Call AcquireNextFrame() to wait for a new frame to arrive.
+Process the received texture.
+Call ReleaseFrame().
+Repeat.
+That's it. Simple, hardware accelerated, and event-based instead of polling. I already like this a lot, but it gets better as you can get dirty rect, scroll rect, and pointer information. The dirty rects and scroll rects just arrive as arrays, and the pointer comes as a simple bitmap instead of a goofy GDI cursor with bizarre monochrome vs. color behavior. A couple of hours of hacking away and I had a working desktop capture app with on-screen indication of dirty regions, and most of that was bringing up a Direct3D 11.1 app from scratch (class, hwnd, factory, adapter, device, swap chain, vertex buffer, vertex shader, input layout, pixel shader, output state, blend state, rasterizer state, sampler state, shader resource view, render target view, wndproc, message loop, clear, draw, present, breathe). Needless to say, I would like to get this integrated into VirtualDub's screen capture driver in the future.
+
+It even doubles as a neat way to find out which of your Win32 controls are invalidating too often. Did you know that Media Player Classic's time bar updates even if the thumb hasn't moved a whole pixel?
+
+I did discover a few gotchas. The first is that you can easily forget that your own UI will cause a display update! The second is that the API allows you to extract scroll regions, but as far as I can tell these correspond to the scroll-on-Present() feature in the new DXGI flip APIs and I couldn't find anything that uses it yet. That means if you're writing a screen cap program that does dirty rect optimization, you'll need to hack up another app to test that scrolling is handled properly. The third is that the DWM appears to aggressively merge overlapping dirty rects. No doubt this was important for DWM rendering efficiency, but it does result in suboptimal rects from an area coverage standpoint that would definitely need post-processing for compression or network bandwidth reduction.
+
+I didn't try the display duplication API with protected content on screen -- in fact, I'm not even sure I use any programs that enable that -- but it looks like they've taken the more sensible approach of blacking out those windows instead of blocking screen capture altogether. I also didn't look into how this API would work with other 3D APIs. Since it's DXGI based it naturally requires D3D10 or above, but I think you could marshal the surfaces without copying over to D3D9Ex and maybe OpenGL with the appropriate extensions. Straight D3D9 I think would be out in the cold. I'll probably just port my OpenGL-based code to D3D11.1 since the OpenGL code is pretty crufty and D3D11.1 can target down-level platforms with 10level9 support.
