@@ -8,8 +8,8 @@
 
 struct DSTInfo
 {
-    bool dst;
-    std::string zone_name;
+    bool dst;                   // 是否支持夏令时
+    std::string zone_name;      // 时区名  (UTC-10:00) America/Adak
     std::string in_time;
     std::string out_time;
 };
