@@ -1,0 +1,523 @@
+#pragma once
+
+class ID3D11Device;
+class ID3D11DeviceContext;
+class ID3D11Texture2D;
+class ID3D11Buffer;
+class ID3D11InputLayout;
+class ID3D10Blob;
+class ID3D11VertexShader;
+class ID3D11PixelShader;
+class ID3D11SamplerState;
+class ID3D11ShaderResourceView;
+
+namespace BeeGraphicalWall
+{
+	class TexturePainter
+	{
+	public:
+		TexturePainter();
+		~TexturePainter();
+
+		void SetTexture(ID3D11Device* ptr_dev, ID3D11DeviceContext* ptr_devcon, ID3D11Texture2D* ptr_texture);
+
+		bool Init();
+		void Uninit();
+
+		bool Render();
+
+	private:
+		ID3D11Device* ptr_dev_ = nullptr;                     // the pointer to our Direct3D device interface
+		ID3D11DeviceContext* ptr_devcon_ = nullptr;           // the pointer to our Direct3D device context
+		ID3D11Texture2D* ptr_texture_ = nullptr;
+
+		ID3D11ShaderResourceView* ptr_shader_resource_view_ = nullptr;
+
+		ID3D11Buffer* squareIndexBuffer = nullptr;
+		ID3D11Buffer* squareVertBuffer = nullptr;
+		ID3D11InputLayout* vertLayout = nullptr;
+
+		ID3D10Blob* VS_Buffer = nullptr;
+		ID3D10Blob* PS_Buffer = nullptr;
+		ID3D11VertexShader* VS = nullptr;
+		ID3D11PixelShader* PS = nullptr;
+
+		ID3D11SamplerState* CubesTexSamplerState = nullptr;
+	};
+
+}
+  
+  
+  
+  #include "TexturePainter.h"
+
+#include <windows.h>
+#include <string.h>
+
+#include <D3Dcompiler.h>
+
+#include <d3d11.h>
+
+#pragma comment(lib,"d3dcompiler.lib")
+
+namespace BeeGraphicalWall
+{
+	struct XMFLOAT3
+	{
+		XMFLOAT3(float x, float y, float z):
+			x_(x),
+			y_(y),
+			z_(z)
+		{
+
+		}
+		XMFLOAT3() {}
+		float x_;
+		float y_;
+		float z_;
+	};
+
+	struct XMFLOAT2
+	{
+		XMFLOAT2(float x, float y) :
+			x_(x),
+			y_(y)
+		{
+
+		}
+		XMFLOAT2() {}
+		float x_;
+		float y_;
+		float z_;
+	};
+
+	struct Vertex
+	{
+		Vertex() {}
+		Vertex(float x, float y, float z,
+			float u, float v)
+			: pos(x, y, z), texCoord(u, v) {}
+
+		XMFLOAT3 pos;
+		XMFLOAT2 texCoord;
+	};
+
+	static Vertex v[] =
+	{
+		// Front Face
+		Vertex(-1.0f, -1.0f, 0.0f, 0.0f, 1.0f),
+		Vertex(-1.0f,  1.0f, 0.0f, 0.0f, 0.0f),
+		Vertex(1.0f,  1.0f, 0.0f, 1.0f, 0.0f),
+		Vertex(1.0f, -1.0f, 0.0f, 1.0f, 1.0f)
+	};
+
+	static DWORD indices[] = {
+		// Front Face
+		0,  1,  2,
+		0,  2,  3
+	};
+
+	static D3D11_INPUT_ELEMENT_DESC v_layout[] =
+	{
+		// 参数类型  dxd11 随意叫啥都行
+		// 同名参数类型先后顺序 
+		// 输入类型 buffer入口（一个buffer一个） 
+		// buffer偏移（同个buffer里不同参数） 
+		// buffer的使用类型
+		// 实例化每个跨度
+		{ "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0 },
+		{ "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 12, D3D11_INPUT_PER_VERTEX_DATA, 0 }
+	};
+
+	static UINT numElements = ARRAYSIZE(v_layout);
+
+	TexturePainter::TexturePainter()
+	{
+
+	}
+
+	TexturePainter::~TexturePainter()
+	{
+		Uninit();
+	}
+
+	void TexturePainter::SetTexture(ID3D11Device* ptr_dev, ID3D11DeviceContext* ptr_devcon, ID3D11Texture2D* ptr_texture)
+	{
+		ptr_dev_ = ptr_dev;
+		ptr_devcon_ = ptr_devcon;
+		ptr_texture_ = ptr_texture;
+	}
+
+	bool TexturePainter::Init()
+	{
+		HRESULT hr = S_OK;
+
+		// shader--------------------------------------
+		// flag: D3DCOMPILE_ENABLE_STRICTNESS | D3DCOMPILE_DEBUG
+		hr = D3DCompileFromFile(L"./shader/Effects.fx", 0, 0, "VS", "vs_4_0", 0, 0, &VS_Buffer, 0);
+		if (FAILED(hr))
+		{
+			return false;
+		}
+		hr = ptr_dev_->CreateVertexShader(VS_Buffer->GetBufferPointer(), VS_Buffer->GetBufferSize(), NULL, &VS);
+		if (FAILED(hr))
+		{
+			return false;
+		}
+		hr = D3DCompileFromFile(L"./shader/Effects.fx", 0, 0, "PS", "ps_4_0", 0, 0, &PS_Buffer, 0);
+		if (FAILED(hr))
+		{
+			return false;
+		}
+		hr = ptr_dev_->CreatePixelShader(PS_Buffer->GetBufferPointer(), PS_Buffer->GetBufferSize(), NULL, &PS);
+		if (FAILED(hr))
+		{
+			return false;
+		}
+
+		//hr = ptr_dev_->CreateVertexShader(VS_Buffer->GetBufferPointer(), VS_Buffer->GetBufferSize(), NULL, &VS);
+		//if (FAILED(hr))
+		//{
+		//	return false;
+		//}
+		//hr = ptr_dev_->CreatePixelShader(PS_Buffer->GetBufferPointer(), PS_Buffer->GetBufferSize(), NULL, &PS);
+		//if (FAILED(hr))
+		//{
+		//	return false;
+		//}
+
+		// vertex-------------------------------
+		D3D11_BUFFER_DESC vertexBufferDesc;
+		ZeroMemory(&vertexBufferDesc, sizeof(vertexBufferDesc));
+
+		vertexBufferDesc.Usage = D3D11_USAGE_DEFAULT;
+		vertexBufferDesc.ByteWidth = sizeof(Vertex) * 4;
+		vertexBufferDesc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+		vertexBufferDesc.CPUAccessFlags = 0;
+		vertexBufferDesc.MiscFlags = 0;
+
+		D3D11_SUBRESOURCE_DATA vertexBufferData;
+
+		ZeroMemory(&vertexBufferData, sizeof(vertexBufferData));
+		vertexBufferData.pSysMem = v;
+		hr = ptr_dev_->CreateBuffer(&vertexBufferDesc, &vertexBufferData, &squareVertBuffer);
+		if (FAILED(hr))
+		{
+			return false;
+		}
+
+		// index-------------------------------------
+		D3D11_BUFFER_DESC indexBufferDesc;
+		ZeroMemory(&indexBufferDesc, sizeof(indexBufferDesc));
+
+		indexBufferDesc.Usage = D3D11_USAGE_DEFAULT;
+		indexBufferDesc.ByteWidth = sizeof(DWORD) * 6;
+		indexBufferDesc.BindFlags = D3D11_BIND_INDEX_BUFFER;
+		indexBufferDesc.CPUAccessFlags = 0;
+		indexBufferDesc.MiscFlags = 0;
+
+		D3D11_SUBRESOURCE_DATA iinitData;
+
+		iinitData.pSysMem = indices;
+		hr = ptr_dev_->CreateBuffer(&indexBufferDesc, &iinitData, &squareIndexBuffer);
+		if (FAILED(hr))
+		{
+			return false;
+		}
+
+		// input layout---------------------------------------
+		hr = ptr_dev_->CreateInputLayout(v_layout, numElements, VS_Buffer->GetBufferPointer(),
+			VS_Buffer->GetBufferSize(), &vertLayout);
+		if (FAILED(hr))
+		{
+			return false;
+		}
+
+		// texture---------------------
+		D3D11_TEXTURE2D_DESC teture_desc;
+		ptr_texture_->GetDesc(&teture_desc);
+
+		D3D11_SHADER_RESOURCE_VIEW_DESC srDesc;
+		srDesc.Format = teture_desc.Format;
+		srDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+		srDesc.Texture2D.MostDetailedMip = 0;
+		srDesc.Texture2D.MipLevels = 1;
+		hr = ptr_dev_->CreateShaderResourceView(ptr_texture_, &srDesc, &ptr_shader_resource_view_);
+		if (FAILED(hr))
+		{
+			return false;
+		}
+
+		// sample-------------------
+		D3D11_SAMPLER_DESC sampDesc;
+		ZeroMemory(&sampDesc, sizeof(sampDesc));
+		sampDesc.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+		sampDesc.AddressU = D3D11_TEXTURE_ADDRESS_WRAP;
+		sampDesc.AddressV = D3D11_TEXTURE_ADDRESS_WRAP;
+		sampDesc.AddressW = D3D11_TEXTURE_ADDRESS_WRAP;
+		sampDesc.ComparisonFunc = D3D11_COMPARISON_NEVER;
+		sampDesc.MinLOD = 0;
+		sampDesc.MaxLOD = D3D11_FLOAT32_MAX;
+
+		hr = ptr_dev_->CreateSamplerState(&sampDesc, &CubesTexSamplerState);
+		if (FAILED(hr))
+		{
+			return false;
+		}
+
+		return true;
+	}
+
+	void TexturePainter::Uninit()
+	{
+		if (ptr_shader_resource_view_ != nullptr)
+		{
+			ptr_shader_resource_view_->Release();
+			ptr_shader_resource_view_ = nullptr;
+		}
+
+		if (squareIndexBuffer != nullptr)
+		{
+			squareIndexBuffer->Release();
+			squareIndexBuffer = nullptr;
+		}
+		if (squareVertBuffer != nullptr)
+		{
+			squareVertBuffer->Release();
+			squareVertBuffer = nullptr;
+		}
+
+		if (vertLayout != nullptr)
+		{
+			vertLayout->Release();
+			vertLayout = nullptr;
+		}
+		if (VS_Buffer != nullptr)
+		{
+			VS_Buffer->Release();
+			VS_Buffer = nullptr;
+		}
+		if (PS_Buffer != nullptr)
+		{
+			PS_Buffer->Release();
+			PS_Buffer = nullptr;
+		}
+		if (VS != nullptr)
+		{
+			VS->Release();
+			VS = nullptr;
+		}
+		if (PS != nullptr)
+		{
+			PS->Release();
+			PS = nullptr;
+		}
+		if (CubesTexSamplerState != nullptr)
+		{
+			CubesTexSamplerState->Release();
+			CubesTexSamplerState = nullptr;
+		}
+	}
+
+	bool TexturePainter::Render()
+	{
+		ptr_devcon_->VSSetShader(VS, 0, 0);
+		ptr_devcon_->PSSetShader(PS, 0, 0);
+
+		// todo: set when draw
+		UINT stride = sizeof(Vertex);
+		UINT offset = 0;
+		ptr_devcon_->IASetVertexBuffers(0, 1, &squareVertBuffer, &stride, &offset);
+
+		// todo: set when draw
+		ptr_devcon_->IASetIndexBuffer(squareIndexBuffer, DXGI_FORMAT_R32_UINT, 0);
+
+		// todo: set when draw
+		ptr_devcon_->IASetInputLayout(vertLayout);
+		ptr_devcon_->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+
+		ptr_devcon_->PSSetShaderResources(0, 1, &ptr_shader_resource_view_);
+
+		ptr_devcon_->PSSetSamplers(0, 1, &CubesTexSamplerState);
+
+		ptr_devcon_->DrawIndexed(6, 0, 0);
+
+		return true;
+	}
+}
+
+
+#include "MouseTricker.h"
+
+#include "BeeClientGraphicalWall.h"
+#include "MouseCurtain.h"
+
+#include <QTimer>
+
+#include <QDebug>
+
+namespace BeeClientGraphicalWall
+{
+	static MouseTricker* ptr_this = NULL;
+
+	LRESULT CALLBACK MapMouseProc(int nCode, WPARAM wParam, LPARAM lParam)
+	{
+		MSLLHOOKSTRUCT* ptr_stru = (MSLLHOOKSTRUCT*)lParam;
+
+		ptr_this->ptr_curtain->HideMouse();
+		if (ptr_this->translated_)
+		{
+			if (ptr_this->IsInSrcRect(ptr_stru->pt.x, ptr_stru->pt.y))
+			{
+				double relative_x = ptr_stru->pt.x - ptr_this->src_rect.left();
+				double relative_y = ptr_stru->pt.y - ptr_this->src_rect.top();
+				double per_x = relative_x / (double)ptr_this->src_rect.width();
+				double per_y = relative_y / (double)ptr_this->src_rect.height();
+
+				// show map mouse
+				int map_x = per_x * ptr_this->map_rect.width();
+				int map_y = per_y * ptr_this->map_rect.height();
+
+				ptr_this->ptr_curtain->DrawMouse(map_x, map_y);
+			}
+		}
+
+		return CallNextHookEx(ptr_this->map_hook, nCode, wParam, lParam);
+	}
+
+	void CALLBACK WinEventProc(
+		HWINEVENTHOOK hWinEventHook,
+		DWORD         event,
+		HWND          hwnd,
+		LONG          idObject,
+		LONG          idChild,
+		DWORD         dwEventThread,
+		DWORD         dwmsEventTime
+	)
+	{
+		if (idObject == OBJID_CURSOR)
+		{
+			ptr_this->ptr_curtain->UpdateCursor();
+		}
+	}
+
+	MouseTricker::MouseTricker(QObject* ptr_parent /* = Q_NULLPTR */) : QObject(ptr_parent)
+	{
+		ptr_this = this;
+	}
+
+	void MouseTricker::SetWinID(HWND src_wid, HWND map_wid, CMouseCurtain* ptr_w)
+	{
+		src_wid_ = src_wid;
+		map_wid_ = map_wid;
+		ptr_curtain = ptr_w;
+	}
+
+	void MouseTricker::UpdateMapSize()
+	{
+		RECT rect;
+		GetWindowRect(src_wid_, &rect);
+		src_rect = QRect(rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top);
+
+		GetWindowRect(map_wid_, &rect);
+		map_rect = QRect(rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top);
+
+		double temp_map_w = map_rect.width();
+		double temp_map_h = map_rect.height();
+
+		double temp_src_w = src_rect.width();
+		double temp_src_h = src_rect.height();
+
+		if (temp_map_w / temp_map_h > temp_src_w / temp_src_h)
+		{
+			temp_map_w = temp_src_w / temp_src_h * temp_map_h;
+			map_rect.setWidth(temp_map_w);
+		}
+		else
+		{
+			temp_map_h = temp_src_h / temp_src_w * temp_map_w;
+			map_rect.setHeight(temp_map_h);
+		}
+
+		offset_x = map_rect.left() - src_rect.left();
+		offset_y = map_rect.top() - src_rect.top();
+
+		qDebug() << src_rect << map_rect << offset_x << offset_y;
+	}
+
+	bool MouseTricker::StartMap()
+	{
+		map_hook = SetWindowsHookEx(WH_MOUSE_LL, MapMouseProc, GetModuleHandle(NULL), 0);
+		if (map_hook == NULL)
+		{
+			return false;
+		}
+
+		g_hook = SetWinEventHook(EVENT_OBJECT_NAMECHANGE, EVENT_OBJECT_NAMECHANGE, nullptr, WinEventProc, 0, 0, WINEVENT_OUTOFCONTEXT);
+		if (g_hook == NULL)
+		{
+			if (map_hook != NULL)
+			{
+				UnhookWindowsHookEx(map_hook);
+				map_hook = NULL;
+			}
+
+			return false;
+		}
+		
+
+		UpdateMapSize();
+
+		is_mapping_ = true;
+		return true;
+	}
+
+	void MouseTricker::StopMap()
+	{
+		if (is_mapping_)
+		{
+			if (g_hook != NULL)
+			{
+				UnhookWinEvent(g_hook);
+				g_hook = NULL;
+			}
+
+			if (map_hook != NULL)
+			{
+				UnhookWindowsHookEx(map_hook);
+				map_hook = NULL;
+			}
+		}
+	}
+
+	bool MouseTricker::IsInSrcRect(int x, int y)
+	{
+		return is_mapping_ && IsWindowActive(src_wid_) && src_rect.contains(x, y);
+	}
+
+	bool MouseTricker::IsInMapRect(int x, int y)
+	{
+		return is_mapping_ && map_rect.contains(x, y);
+	}
+
+	bool MouseTricker::IsWindowActive(HWND hwnd)
+	{
+		return true;
+	}
+
+	bool MouseTricker::GrabMouse(int x, int y)
+	{
+		if (is_mapping_)
+		{
+			translated_ = true;
+			SetCursorPos(src_rect.left() + x, src_rect.top() + y);
+
+			return true;
+		}
+	}
+
+	void MouseTricker::ReleaseMouse()
+	{
+		translated_ = false;
+	}
+}
