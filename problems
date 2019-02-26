@@ -1,0 +1,184 @@
+defualt------------------------------------
+batch
+----------延迟删除--------------
+ping 192.0.2.2 -n 1 -w 5000 > nul
+rd /s /q "D:\11\2"
+
+windbg
+symbol file path
+srv*d:/symbolslocal*http://msdl.microsoft.com/download/symbols;C:\Users\wanghaodong5\Documents\我接收到的文件\pdb(1)\pdb
+键入
+!analyze -v
+抓dump
+.dump /ma "盘符:\xxx.dmp"
+打印所有线程
+~*kb
+打印主线程
+~0s;kb
+32位调64位
+.load wow64exts
+!sw
+中断
+ctrl+Break (page up 上面那个)
+继续运行
+f5
+查看句柄
+中断 --》 !htrace -enable   ----》 !htrace -snapshot ---》继续运行  ---》中断 --》!htrace -snapshot  -----》  !htrace -diff
+
+
+生成DUMP
+调试-创建转储文件   任务管理器-
+
+一些坑
+1.item手型光标
+seteditable(false); 代理中变型
+2 样式表中指定item color 则foregroundcolor被覆盖
+改itemview color
+3 保存qmodelindex  model改变后失效  （视图中有这么干，注意）
+  返回qmodelindex引用
+4 搜索关键字item字体变红  treeviewheader 中更改
+5 Q_OBJECT 宏添加后工程文件会include moc_文件 需一同上传工程文件
+6 moc img系统无法找到路径  重开VS
+7 类头文件后声明Q_DECLARE_METATYPE(namespace::classname)
+8 使用时引用qRegisterMetaType<classname>("classname");
+8 unresolved external symbol "public: void __thiscall 删除文件再添加
+10 cmd.exe QT路径  环境变量被改
+11 机器上提示内存地址不正确  bin下qtconfig文件
+12 依赖库黏贴  qt command   F:\aaa> windeployqt XX.exe
+13 更改样式后font图标不显示  stylesheet中指定font-family
+14 webengine析构崩溃，保证web窗口在父窗口前delete掉，不要用deletelater。
+15 win7.win8 32位提示没有api-ms...动态库不存在（不存在的同时会提示是否允许运行，如存在则不会提示）  尝试安装更新
+https://support.microsoft.com/en-gb/help/2999226/update-for-universal-c-runtime-in-windows    或者一个一个贴   32一份  64一份 
+16 Error	LNK2026	module unsafe for SAFESEH image.
+Linker-Advanced-Image Has Safe Exception Handlers设NO
+17.在类中qApp->processEvents()同时deleteLater，导致死循环
+18.跨线程槽函数调用 信号源qobject被delete（直接delete会导致崩溃？毕竟可以拿sender，不崩就是野指针）后slot扔会被调用
+19.qset 重复元素tolist会变空 （1233 set中是3个 list是4个）
+20.winsock2 头文件预定义问题报错 c/c++  preprocessor preprocessor definitions 增加 WIN32_LEAN_AND_MEAN
+21.用std::thread配合callback 需保证正常回调不会调用反初始化  异常时回调可以反初始化但需保证callback后的代码中不会访问类成员（此时反初始化不join直接detech）
+22.包含qt私有头文件 QT += core-private 加到.pro中
+23.#include <mswsock.h>包含头文件编译错误   前面加#include <Winsock2.h>
+
+easy code
+#c73132   
+nor=#666666 pre=#fa3239（红） dis=#cccccc  浅底色文字 
+nor=#999999  pre=#ffffff（白）dis=#555555  深底色文字
+小标题都是14px 半粗 #333333
+普通文字都是13px的 普通 #666666
+
+font-family: Segoe UI Semibold;
+font-family: Segoe UI Regular;
+
+QFont setPointSize ： setPixelSize 0.75 ： 1
+
+#ffffffff hover normal #99ffffff
+f5f5f5   浅色底
+#2196f3  蓝
+
+Q_DECLARE_METATYPE
+
+--------file info-------
+/**@file    HeatMapContentWidget.h
+*  @note    HangZhou Hikvision Digital Technology Co., Ltd. All Right Reserved.
+*  @brief   热度图图片显示界面
+*  @author  王浩东
+*  @date    2016-07-18
+*/
+
+-------info----------
+#include "UiDataController/Information/InformationMgr.h"
+InfoTipsData tips;
+            tips.strText = tr("No permission on remote download.");
+            UiDataController::CInformationMgr::Instance().ShowInformationAtScreenRightBottom_V3(tips);
+
+-------error----------
+#include "UiDataController/ErrorInfoMgr/ErrorInfoMgr.h"
+CInformationMgr::Instance().ShowLastErrorInfo(
+                CErrorInfoMgr::Instance().GetErrorInfoByCode(module_code, error_code),
+                "",
+                tr("search failed"),
+                iVMSGUIToolkit::GetParentWindow(this));
+// 字符串
+Error::SetLastError(Error::ErrorCode(ptr_view_model_->GetErrorModule(), ptr_view_model_->GetErrorCode()));
+            // 修改失败要提示
+            CInformationMgr::Instance().ShowLastErrorInfo(CErrorInfoMgr::Instance().GetErrorInfo(), "", tr("Remove view/viewgroup failed."), this);
+
+------download resource-------
+#include "ClientFramework/ui/IVMSApplication/ResourceDownload/ResourceDownloadManager.h"
+#include "UiDataController/Information/InformationMgr.h"
+#include "UiDataController/ErrorInfoMgr/ErrorInfoMgr.h"
+
+vector<ResourceStruct::ResourceType> vec_resource_type;
+        vec_resource_type.push_back(ResourceStruct::RandomCameraElement);
+
+        vector<ID> vec_resource_ids;
+        vec_resource_ids.push_back(camera_id);
+
+        CResourceDownloadManager download_obj;
+        if (!download_obj.StartDownload(vec_resource_type, vec_resource_ids))
+        {
+            // 下载资源失败
+            CResourceDownloadManager::ShowErrorInfo();
+                return;
+        }
+
+-------get resource---------
+CCameraElement* ptr_camera = CWorkStationManager::Instance().
+                FindCameraElementByID(CWorkStationManager::Instance().GetHostWorkStationID(), camera_element_id);
+
+--------device login----------
+
+-------- VCAsearch 回放窗口--------
+D:\svn\vsm-v4.x-release\code\Client\src\ClientFramework\ui\Public\PlaybackEditWnd\PlaybackEditWnd.cpp
+---------  clip search -----------
+D:\svn\vsm-v4.x-release\code\Client\src\ClientFramework\ui\Public\PlaybackEditWnd\PlaybackWindowEx\CPlaybackWindowEx.cpp
+----------  设备类型 -----------
+ptr_playcamera->GetDeviceCategoty()
+enum StorageMediaType
+    {
+        NullStorageMediaType = -1,
+        Device = 2,           // 设备中存储你好
+        StorageServer = 0,    // 存储服务器存储        windowNvr
+        CVR = 1,              // CVR
+        NvrServer = 3,
+    };
+-----------  字符串编码-------------
+#include "iVMSGUIToolkit/PublicControlFunc.h"
+QString->string
+static_cast<std::string>(iVMSGUIToolkit::ConvertFromUnicode)
+string->QString
+iVMSGUIToolkit::ConvertToUnicode(ptr_camera->GetCameraElementName().data())
+------------ connect---------------
+connect(ComboBox(), static_cast<void(QComboBox::*)(int)>(&QComboBox::currentIndexChanged), this, [=](int index) 
+------------- rcc 编译--------------
+rcc -binary myresource.qrc -o myresource.rcc
+
+VS配置 cmake 翻译
+
+-------------库生成debug改名------------
+general-Target Name  $(ProjectName)_D
+Linder-General   $(OutDir)\$(ProjectName)_D.dll
+-------------release版本生成PDB----------
+Linder-Debugging-Generate Debug Info  Optimize for debugging (/DEBUG)
+-------------预编译头--------------------
+C/C++  procompiled header create再use
+C/C++  advanced  forced include file
+-------------动态库工程导出符号宏定义----------
+C/C++   preprocessor Preprocessor definitions
+-------------QT在VS中输出cout------------------
+linker-system-subsystem console(/subsystem:console)
+
+------远程桌面复制黏贴--------
+mstsc
+rdpclip.exe
+
+--------QT多语言TS----------
+QT VS TOOLS create basic .pro file
+打开VS2015 x86 Native Tools Command Prompt
+$path\lupdate.exe $path\xx.pro
+--------源码调试------------
+解决方案-属性-通用属性-调试源文件
+--------加载PDB-------------
+工具-选项-调试-符号
+----------cmake---------
+选择源文件夹-选择目标原件夹-configure-(生成错误信息，按要求在面板中填入参数信息（name-value）,可能是一些库的本地路径)-generate-打开vs工程  编译
