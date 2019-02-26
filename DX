@@ -1,0 +1,126 @@
+坑爹问题
+1.共享纹理 ---------------------
+ 用GetSharedHandle（8之后用createSharedHandle）时D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX这个标志位别用，会报错
+2.direct2d ---------------------
+无法绘制透明的纹理    考虑DirectComposition(win8以上) 或者 2d的GDI绘图
+
+1.单机显卡上墙产品化，负责支持产品组集成，调试，缺陷修复
+2.参与HC服务端改造，联调，测试，缺陷修复
+3.视频窗口QML化方案预研，解决半透明叠加，半透明工具栏等问题
+4.播放库跨显卡播放后续问题跟进 
+
+metal
+
+kIOSurfaceLockAvoidSync 低耗锁 不读gpu
+
+Math
+向量绕原点（固定点）旋转
+逆时针 90度   cos90 sin90 -sin90 cos90
+顺时针 90度   cos90 -sin90 sin90 cos90
+
+
+
+QEventDispatcherWin32继承   QWindowsGuiEventDispatcher拷贝
+
+windows hook
+1.根据msdn文档描述    选择钩子类型（WH_MOUSE_LL为全局钩子  模块句柄  线程不用填 非全局的就要）
+2.非全局钩子，需写在库里，可将SetWindowsHookEx写在库中，直接调用getcurrentmodule获取当前库句柄  GetWindowThreadProcessId获取进程及线程句柄（回调函数将会在目标窗口的进程中被调用，所以要以message等方式通知回当前进程）
+3.根据钩子类型转换钩子入参为相应结构体
+
+
+
+
+const HMODULE GetCurrentModule()
+	{
+		MEMORY_BASIC_INFORMATION mbi = { 0 };
+		::VirtualQuery(GetCurrentModule, &mbi, sizeof(mbi));
+
+		return reinterpret_cast<HMODULE>(mbi.AllocationBase);
+	}
+  
+  编译问题
+1.main入口找不到
+fx文件导致    右键改文件  属性  item type 选Does not participate in build
+2. unresolved external symbol __vsnwprintf
+#pragma comment(lib, "legacy_stdio_definitions.lib")
+3. <dxgi1_2.h>头文件包含报错  按以下顺序包含
+<windows.h> <windowsx.h> <dxgi1_2.h> <d3d11.h> <d3dx11.h>
+
+
+
+
+报错问题
+------------------------
+1.DrawInstanced: Vertex Buffer at the input vertex slot 0 is not big enough for what the Draw*() call expects to traverse
+查看顶点数据（应该是input slot指向的那个数据）放入的个数是否和draw调用时指明的个数相符（尤其是带有indexdraw时）
+
+
+
+调试问题
+-------------------------
+1.HLSL调试
+a)shader创建时第六个参数D3DCOMPILE_ENABLE_STRICTNESS | D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION   （#include "D3DCompiler.h"）
+b)debug-Graphics-Start Graphics Debugging  
+c)点击截取帧
+d)点击图片上方超链接（弹出新面板）
+e)左上方 event list 中展开draw动作选择shader  
+f)pipeline Stages中选个shader 绿箭头开始调试
+
+legacy directx
+--------------------------
+D:\Microsoft DirectX SDK (June 2010)
+
+release崩溃问题
+---------------------------
+开启c++ - Optimization - Optimization(Max Speed)后崩溃   疑似XMVectorSet XMMATRIX 的问题 由于16-byte aligned when compiled with SSE(2)
+
+d3d 纹理------------
+
+D3DUSAGE_DYNAMIC
+D3DPOOL_DEFAULT
+
+ID3D11Texture2D  （1. IDXGISwapChain Getbuffer 2. 自己new new时可指定share或者rendertarget   GDI必须是target）
+CreateRenderTargetView 
+OMSetRenderTargets
+
+顶点坐标  纹理坐标-----------
+纹理   左上 0 0    右下 1 1
+顶点   左下-1 -1  右上 1 1   画的时候左下开始 顺时针
+靠近屏幕为  -1 z轴
+
+坐标-----------
+WVP  w 世界矩阵（物体偏移*物体缩放*物体旋转）  v 相机坐标（相机坐标 目标坐标 lookat） p 视野坐标（近距 远距 视野广角）
+先rotate 再 scale 再translate
+
+http://question.askprogramming.com/1021555/draw-iosurfaces-iosurface.html
+
+加载图像文件到纹理---------
+MSDN 例子中需修改
+_WIN32_WINNT=0x0601  // 工程预定义添加（代表windows7   默认0x0602  好像是windows7 sp）
+CoInitialize(NULL);  // note: 这里是关键
+	HRESULT hr = CoCreateInstance(
+		CLSID_WICImagingFactory,
+		nullptr,
+		CLSCTX_INPROC_SERVER,
+		__uuidof(IWICImagingFactory),
+		(LPVOID*)&s_Factory
+	);
+	CoUninitialize();
+
+capture
+1.What DWM does allow you is redirecting HWND surfaces, so you can display the surfaces of other HWNDs on your window. This can be done either through DirectComposition (via CreateSurfaceFromHwnd) or the DWM API (via DwmRegisterThumbnail). For an example of the latter look here.
+2.hook dwm 的 share resrouce 或者 dx的present?
+3.desktop dumplication 但只能对显卡输出口  即屏幕
+4.directcomposition 啥玩意儿
+5.obs开源项目怎么做
+
+
+
+DWM窗口windows7下顶层窗口限制  可能由于layeredwindows限制（top-level） windows8以上支持子窗口设置该该样式
+CreateSurfaceFromHwnd要求是layeredwindow
+
+D3D11_CREATE_DEVICE_DEBUG 
+
+1.windows 7
+使用bitblt截取目标窗口图像  映射至IDXGISurface1::GetDC 
+双显卡时无法使用   每次刷新要重新获取目标窗口的DC
