@@ -1,0 +1,770 @@
+/**	@file   BeeGraphicalWall.h
+*	@note   HangZhou Hikvision Digital Technology Co., Ltd. All Right Reserved.
+*	@brief  本地回显的映射窗口类
+*
+*	@author wanghaodong5
+*	@date   2018/10/15
+*/
+
+#ifndef BEEGRAPHICALWALL_H
+#define BEEGRAPHICALWALL_H
+
+#if (defined(WIN32) || defined(WIN64))
+#ifdef BEEGRAPHICALWALL
+# define BEEGRAPHICALWALL_EXPORT __declspec(dllexport)
+#else
+# define BEEGRAPHICALWALL_EXPORT __declspec(dllimport)
+#endif
+#endif
+
+#define BEEGRAPHICALWALL_NOERROR					0       // 无错误
+#define BEEGRAPHICALWALL_ISNOTWINDOW				1		// 窗口句柄错误
+#define BEEGRAPHICALWALL_EXITTIMEOUT				2		// 退出超时
+#define BEEGRAPHICALWALL_BITBLTFAILED				3		// 画面复制失败
+#define BEEGRAPHICALWALL_GETCURSORFAILED				4		// 获取光标信息失败
+#define BEEGRAPHICALWALL_GETCURSORICONFAILED				5		// 获取光标图标失败
+#define BEEGRAPHICALWALL_GETSRCWINDOWRECTFAILED				6		// 获取目标窗口矩形失败
+#define BEEGRAPHICALWALL_GETSURFACEDCFAILED				7		// 获取自身DC失败
+#define BEEGRAPHICALWALL_GETSRCDCFAILED				8		// 获取源窗口DC失败
+#define BEEGRAPHICALWALL_DRAWICONFAILED				9		// 绘制光标失败
+
+// dx
+#define BEEGRAPHICALWALL_DXMYINITFAILED				100
+#define BEEGRAPHICALWALL_DXD3D11CREATEDEVICEANDSWAPCHAIN				101	
+#define BEEGRAPHICALWALL_DXGETBUFFER				102	
+#define BEEGRAPHICALWALL_DXQUERYINTERFACE				103
+#define BEEGRAPHICALWALL_DXCREATERENDERTARGETVIEW				104
+#define BEEGRAPHICALWALL_DXTEXTUREINITFAILED				105
+
+#include <QWidget>
+#include <QThread>
+
+#include <string.h>
+#include <vector>
+
+#include <Windows.h>
+
+namespace BeeGraphicalWall
+{
+	class CMapWidgetPrivate;
+
+	// 目前不支持满屏模式
+	class BEEGRAPHICALWALL_EXPORT CEchoWidget : public QWidget
+	{
+		Q_OBJECT
+
+	public:
+		// 构造函数
+		CEchoWidget(QWidget* ptr_widget = NULL);
+		// 析构函数
+		~CEchoWidget();
+
+		// 目标窗口及窗口范围内所有子窗口
+		bool StartMap(HWND src_wid);
+		// 停止窗口映射
+		void StopMap();
+
+		bool IsMapping();
+
+		// 开始映射光标,光标大小，位置按源窗口与目标窗口的比例缩放偏移
+		bool GrabCursor();
+		// 停止映射光标
+		void ReleaseCursor();
+
+		bool IsGrabbing();
+
+		// 设置帧率
+		bool SetFPS(int fps);
+
+		int GetFPS();
+
+		// 获取错误码
+		int GetLastErrorCode();
+
+	signals:
+		void SignalEnter();
+
+		// 错误发生时，触发此信号（主线程）    外部需调用StopMap  以停止当前映射
+		void SignalError(int error_code);
+
+	protected:
+		// 大小事件
+		virtual void paintEvent(QPaintEvent* ptr_event) override;
+		virtual void closeEvent(QCloseEvent* ptr_event) override;
+		virtual void resizeEvent(QResizeEvent* ptr_event) override;
+		virtual void enterEvent(QEvent* ptr_event) override;
+		virtual bool eventFilter(QObject* ptr_watched, QEvent* ptr_event) override;
+
+	private:
+		CMapWidgetPrivate* ptr_d_ = nullptr;   // 私有数据指针
+	};
+}
+
+#endif // BEEGRAPHICALWALL_H
+
+/**	@file   BeeGraphicalWall.cpp
+*	@note   HangZhou Hikvision Digital Technology Co., Ltd. All Right Reserved.
+*	@brief  本地回显的映射窗口类，分为
+1、窗口映射  应用windows的dwm技术   同步渲染窗口
+2、鼠标映射  在映射窗口上叠加透明窗口，绘制光标
+*
+*	@author wanghaodong5
+*	@date   2018/10/15
+*/
+#include "BeeGraphicalWall.h"
+#include "TexturePainter.h"
+
+#include <QTimer>
+#include <QMutex>
+#include <QMetaObject>
+#include <QEvent>
+#include <QResizeEvent>
+
+#include <atomic>
+#include <thread>
+#include <chrono>
+
+#include <windows.h>
+#include <windowsx.h>
+
+#include <dxgi1_2.h>    // 需保证顺序  否则编译失败
+
+#include <d3d11.h>
+
+// include the Direct3D Library file
+#pragma comment (lib, "d3d11.lib")
+
+
+#include <QDebug>
+
+using namespace std;
+using namespace std::chrono;
+
+namespace BeeGraphicalWall
+{
+	class CMapWidgetPrivate
+	{
+	public:
+		bool Init()
+		{
+			if (inited_)
+			{
+				return true;
+			}
+
+			// start map
+			HRESULT hr = S_OK;
+
+			DXGI_SWAP_CHAIN_DESC scd;
+
+			// clear out the struct for use
+			ZeroMemory(&scd, sizeof(DXGI_SWAP_CHAIN_DESC));
+
+			// fill the swap chain description struct
+			scd.BufferCount = 1;                                   // one back buffer
+			scd.BufferDesc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;    // 必填这个才可以getdc
+			scd.BufferDesc.Width = q_width_;                   // set the back buffer width
+			scd.BufferDesc.Height = q_height_;                 // set the back buffer height
+			scd.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;     // how swap chain is to be used
+			scd.OutputWindow = (HWND)ptr_q_->winId();                               // the window to be used
+			scd.SampleDesc.Count = 1;                              // how many multisamples
+			scd.SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
+			scd.Windowed = TRUE;
+			scd.Flags = DXGI_SWAP_CHAIN_FLAG_GDI_COMPATIBLE | DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH;    //COMPATIBLE 必填这个菜可以getdc
+
+			//D3D11_CREATE_DEVICE_DEBUG
+			// todo: 去掉debug
+			hr = D3D11CreateDeviceAndSwapChain(
+				NULL,
+				D3D_DRIVER_TYPE_HARDWARE,
+				NULL,
+				NULL,   //D3D11_CREATE_DEVICE_DEBUG | D3D11_CREATE_DEVICE_SINGLETHREADED  debug模式需安装SDK更新？
+				NULL,
+				0,
+				D3D11_SDK_VERSION,
+				&scd,
+				&swapchain,
+				&dev,
+				NULL,
+				&devcon
+			);
+			if (!SUCCEEDED(hr))
+			{
+				qDebug() << "create device failed: " << hr;
+				error_code_ = BEEGRAPHICALWALL_DXD3D11CREATEDEVICEANDSWAPCHAIN;
+				return false;
+			}
+
+			ID3D11Texture2D *pBackBuffer = NULL;
+			hr = swapchain->GetBuffer(0, __uuidof(ID3D11Texture2D), (LPVOID*)&pBackBuffer);
+			if (!SUCCEEDED(hr))
+			{
+				error_code_ = BEEGRAPHICALWALL_DXGETBUFFER;
+				return false;
+			}
+
+			// mode:1 //
+			hr = pBackBuffer->QueryInterface(__uuidof(IDXGISurface1), (void**)&surface);
+			if (!SUCCEEDED(hr))
+			{
+				pBackBuffer->Release();
+				error_code_ = BEEGRAPHICALWALL_DXQUERYINTERFACE;
+				return false;
+			}
+			////////////////
+
+			// use the back buffer address to create the render target
+			hr = dev->CreateRenderTargetView(pBackBuffer, NULL, &backbuffer);
+			if (!SUCCEEDED(hr))
+			{
+				pBackBuffer->Release();
+				error_code_ = BEEGRAPHICALWALL_DXCREATERENDERTARGETVIEW;
+				return false;
+			}
+			pBackBuffer->Release();
+
+			D3D11_VIEWPORT viewport;
+			ZeroMemory(&viewport, sizeof(D3D11_VIEWPORT));
+
+			viewport.TopLeftX = 0;
+			viewport.TopLeftY = 0;
+			viewport.Width = q_width_;
+			viewport.Height = q_height_;
+
+			devcon->RSSetViewports(1, &viewport);
+			// mode:2 //
+			//hr = swapchain->GetBuffer(0, __uuidof(IDXGISurface1), (void**)&surface);
+			////////////////
+
+			D3D11_TEXTURE2D_DESC textureDesc;
+			HRESULT result;
+			D3D11_RENDER_TARGET_VIEW_DESC renderTargetViewDesc;
+			D3D11_SHADER_RESOURCE_VIEW_DESC shaderResourceViewDesc;
+
+
+			// Initialize the render target texture description.
+			ZeroMemory(&textureDesc, sizeof(textureDesc));
+
+			// Setup the render target texture description.
+			textureDesc.Width = src_width_;
+			textureDesc.Height = src_height_;
+			textureDesc.MipLevels = 1;
+			textureDesc.ArraySize = 1;
+			textureDesc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+			textureDesc.SampleDesc.Count = 1;
+			textureDesc.Usage = D3D11_USAGE_DEFAULT;
+			textureDesc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+			textureDesc.CPUAccessFlags = 0;
+			textureDesc.MiscFlags = D3D11_RESOURCE_MISC_GDI_COMPATIBLE;
+
+			result = dev->CreateTexture2D(&textureDesc, NULL, &ptr_texure);
+			if (FAILED(result))
+			{
+				return false;
+			}
+
+			//IDXGISurface1* ptr_texture_surface = NULL;
+			hr = ptr_texure->QueryInterface(__uuidof(IDXGISurface1), (void**)&ptr_texture_surface);
+			if (FAILED(hr))
+			{
+				error_code_ = BEEGRAPHICALWALL_DXQUERYINTERFACE;
+				return false;
+			}
+
+			ptr_painter = new TexturePainter();
+			ptr_painter->SetTexture(dev, devcon, ptr_texure);
+			if (!ptr_painter->Init())
+			{
+				error_code_ = BEEGRAPHICALWALL_DXTEXTUREINITFAILED;
+				return false;
+			}
+
+			inited_ = true;
+			return true;
+		}
+
+		void Uninit()
+		{
+			inited_ = false;
+
+			if (ptr_painter != NULL)
+			{
+				delete ptr_painter;
+				ptr_painter = NULL;
+			}
+
+			if (ptr_texture_surface != NULL)
+			{
+				ptr_texture_surface->Release();
+				ptr_texture_surface = NULL;
+			}
+
+			if (ptr_texure != NULL)
+			{
+				ptr_texure->Release();
+				ptr_texure = NULL;
+			}
+
+			if (surface != NULL)
+			{
+				surface->Release();
+				surface = NULL;
+			}
+			if (backbuffer != NULL)
+			{
+				backbuffer->Release();
+				backbuffer = NULL;
+			}
+			if (swapchain != NULL)
+			{
+				swapchain->Release();
+				swapchain = NULL;
+			}
+			if (devcon != NULL)
+			{
+				devcon->Release();
+				devcon = NULL;
+			}
+			if (dev != NULL)
+			{
+				dev->Release();
+				dev = NULL;
+			}
+		}
+
+		bool MapAgain()
+		{
+			if (!Init())
+			{
+				qDebug() << "init error" << error_code_;
+				Uninit();
+				error_code_ = BEEGRAPHICALWALL_DXMYINITFAILED;
+				return false;
+			}
+
+			devcon->OMSetRenderTargets(1, &backbuffer, NULL);   // 每次循环必调用这个才可以使绘制指令
+
+			bool r = false;
+			HDC my_hdc = 0;
+			HDC src_hdc = GetDC((HWND)src_wid_);  // DC每一次重新获取  不然会卡屏
+			do
+			{
+				if (src_hdc == 0)
+				{
+					error_code_ = BEEGRAPHICALWALL_GETSRCDCFAILED;
+					break;
+				}
+
+				HDC thdc;
+				ptr_texture_surface->GetDC(true, &thdc);
+
+				if (!BitBlt(thdc,
+					0, 0,
+					src_width_, src_height_,
+					src_hdc,
+					0, 0,
+					SRCCOPY))  //CAPTUREBLT   仅使用SRCCOPY标志时，Windows只需要从M中拷贝屏幕图像就行了。而若使用了CAPTUREBLT标志，导致的结果是鼠标及半透明窗口均被捕捉下来。但在设计上，BitBlt函数是不允许捕捉鼠标的。于是，系统只好先隐藏鼠标，然后捕捉图像，再恢复鼠标，结果就导致了鼠标的闪烁
+				{
+					error_code_ = BEEGRAPHICALWALL_BITBLTFAILED;
+					break;
+				}
+				ptr_texture_surface->ReleaseDC(NULL);
+				ReleaseDC(src_wid_, thdc);
+
+				// render texture
+				ptr_painter->Render();
+
+				if (!SUCCEEDED(surface->GetDC(true, &my_hdc)))
+				{
+					error_code_ = BEEGRAPHICALWALL_GETSURFACEDCFAILED;
+					break;
+				}
+
+				if (is_grab_mouse_)
+				{
+					POINT map_p;
+					ZeroMemory(&map_p, sizeof(POINT));
+					if (ClientToScreen(src_wid_, &map_p) == 0)
+					{
+						error_code_ = BEEGRAPHICALWALL_GETSRCWINDOWRECTFAILED;
+						break;
+					}
+
+					CURSORINFO ci;
+					ci.cbSize = sizeof(ci);
+					if (!GetCursorInfo(&ci))
+					{
+						if (GetLastError() == 5)
+						{
+							// 锁屏？
+							r = true;
+							break;
+						}
+
+						qDebug() << GetLastError();
+						error_code_ = BEEGRAPHICALWALL_GETCURSORFAILED;
+						break;
+					}
+
+					if (ci.hCursor != NULL)
+					{
+						ICONINFO ii;
+						if (!GetIconInfo(ci.hCursor, &ii)) {
+							DeleteObject(ci.hCursor);
+							qDebug() << GetLastError();
+							error_code_ = BEEGRAPHICALWALL_GETCURSORICONFAILED;
+							break;
+						}
+
+						int local_x = ci.ptScreenPos.x - map_p.x - ii.xHotspot;
+						int local_y = ci.ptScreenPos.y - map_p.y - ii.yHotspot;
+
+						float ratio_x = (float)q_width_ / (float)src_width_;
+						float ratio_y = (float)q_height_ / (float)src_height_;
+
+						if (!DrawIcon(my_hdc, local_x * ratio_x, local_y * ratio_y, ci.hCursor))
+						{
+							error_code_ = BEEGRAPHICALWALL_DRAWICONFAILED;
+						}
+
+						DeleteObject(ii.hbmMask);
+						DeleteObject(ii.hbmColor);
+
+						DeleteObject(ci.hCursor);
+					}
+					else
+					{
+						// 当前无光标  跳过
+					}
+				}
+
+				r = true;
+			} while (0);
+
+
+			surface->ReleaseDC(NULL);
+
+			ReleaseDC(my_wid_, my_hdc);
+			ReleaseDC(src_wid_, src_hdc);  // todo: dc会自动置0吗
+
+			if (r)
+			{
+				swapchain->Present(0, 0);
+			}
+			else
+			{
+				qDebug() << "error_code_" << error_code_;
+			}
+
+			return r;
+		}
+
+		void Run()
+		{
+			__int64 original_time = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+			__int64 now = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+			__int64 last = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+			int count = 0;
+
+			while (is_mapping_)
+			{
+				last = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+
+				QMutexLocker locker(&ptr_mutex_);
+
+				if (resize_)
+				{
+					Uninit();
+					resize_ = false;
+				}
+
+				if (!MapAgain())
+				{
+					//QString("error code: %1").arg(error_code_).toStdString().c_str()
+					//Q_ASSERT(false);
+					QMetaObject::invokeMethod(ptr_q_, "SignalError", Qt::QueuedConnection, Q_ARG(int, error_code_));
+					break;
+				}
+
+				now = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+				
+				int past_time = static_cast<int>(now - last);
+				int my_interval = 1000 / fps_;
+				if (past_time < my_interval)
+				{
+					Sleep(my_interval - past_time);
+				}
+				
+				++count;
+				if (now - original_time > 1000)
+				{
+					original_time += 1000;
+					qDebug() << "FPS: " << count;
+					count = 0;
+				}
+			}
+			
+			Uninit();
+		}
+
+		void Start()
+		{
+			if (ptr_thread_ != NULL)
+			{
+				Stop();
+			}
+
+			is_mapping_ = true;
+			ptr_thread_ = new std::thread([this] { Run(); });
+		}
+
+		void Stop()
+		{
+			is_mapping_ = false;
+			is_grab_mouse_ = false;
+
+			if (ptr_thread_ != NULL)
+			{
+				if (ptr_thread_->joinable())
+				{
+					ptr_thread_->join();
+				}
+				delete ptr_thread_;
+				ptr_thread_ = NULL;
+			}
+		}
+
+		bool inited_ = false;
+
+		HWND my_wid_ = 0;
+		HWND src_wid_ = 0;
+
+		QWidget* ptr_src_widget_ = NULL;
+
+		IDXGISurface1* ptr_texture_surface = NULL;
+		ID3D11Texture2D* ptr_texure = NULL;
+		TexturePainter* ptr_painter = NULL;
+
+		IDXGISwapChain *swapchain = NULL;             // the pointer to the swap chain interface
+		ID3D11Device *dev = NULL;                     // the pointer to our Direct3D device interface
+		ID3D11DeviceContext *devcon = NULL;           // the pointer to our Direct3D device context
+		ID3D11RenderTargetView *backbuffer = NULL;    // the pointer to our back buffer
+
+		IDXGISurface1* surface = NULL;
+
+		std::atomic<bool> is_grab_mouse_ = false;				// 映射标志位
+		std::atomic<bool> is_mapping_ = false;				// 映射标志位
+		std::atomic<int> error_code_ = BEEGRAPHICALWALL_NOERROR;					// 错误码
+
+		std::atomic<int> q_width_ = 0;
+		std::atomic<int> q_height_ = 0;
+
+		std::atomic<int> src_width_ = 0;
+		std::atomic<int> src_height_ = 0;
+
+		std::atomic<bool> resize_ = true;
+
+		std::atomic<int> fps_ = 60;
+
+		QMutex ptr_mutex_;
+
+		thread* ptr_thread_ = NULL;
+
+		CEchoWidget* ptr_q_ = NULL;				// 回显窗口句柄
+	};
+
+	// 设置窗口标志位   私有指针
+	CEchoWidget::CEchoWidget(QWidget *parent /* = Q_NULLPTR */) : QWidget(parent)
+	{
+		setAttribute(Qt::WA_PaintOnScreen);
+		setAttribute(Qt::WA_OpaquePaintEvent);
+
+		this->setUpdatesEnabled(false);
+
+
+		setWindowFlags(Qt::Window | Qt::FramelessWindowHint);  //Qt::FramelessWindowHint
+
+		ptr_d_ = new CMapWidgetPrivate;
+		ptr_d_->ptr_q_ = this;
+
+		ptr_d_->my_wid_ = (HWND)winId();
+	}
+
+	// 回收资源
+	CEchoWidget::~CEchoWidget()
+	{
+		StopMap();
+
+		delete ptr_d_;
+		ptr_d_ = NULL;
+	}
+
+	const HMODULE GetCurrentModule()
+	{
+		MEMORY_BASIC_INFORMATION mbi = { 0 };
+		::VirtualQuery(GetCurrentModule, &mbi, sizeof(mbi));
+
+		return reinterpret_cast<HMODULE>(mbi.AllocationBase);
+	}
+
+	// 检查入参 开始映射
+	bool CEchoWidget::StartMap(HWND src_wid)
+	{
+		if (!ptr_d_->is_mapping_)
+		{
+			// map handele
+			if (!IsWindow(src_wid))
+			{
+				ptr_d_->error_code_ = BEEGRAPHICALWALL_ISNOTWINDOW;
+				return false;
+			}
+
+			ptr_d_->ptr_src_widget_ = QWidget::find((WId)src_wid);
+			if (ptr_d_->ptr_src_widget_ == NULL)
+			{
+				ptr_d_->error_code_ = BEEGRAPHICALWALL_ISNOTWINDOW;
+				return false;
+			}
+
+			RECT rect;
+			if (!GetClientRect(src_wid, &rect))
+			{
+				ptr_d_->error_code_ = BEEGRAPHICALWALL_GETSRCWINDOWRECTFAILED;
+				return false;
+			}
+
+			ptr_d_->src_width_ = rect.right - rect.left;
+			ptr_d_->src_height_ = rect.bottom - rect.top;
+
+			if (!GetClientRect((HWND)winId(), &rect))
+			{
+				ptr_d_->error_code_ = BEEGRAPHICALWALL_GETSRCWINDOWRECTFAILED;
+				return false;
+			}
+
+			ptr_d_->q_width_ = rect.right - rect.left;
+			ptr_d_->q_height_ = rect.bottom - rect.top;
+
+			ptr_d_->src_wid_ = src_wid;
+
+			ptr_d_->ptr_src_widget_->installEventFilter(this);
+
+			ptr_d_->Start();
+		}
+
+		return ptr_d_->is_mapping_;
+	}
+
+	// 停止映射
+	void CEchoWidget::StopMap()
+	{
+		ptr_d_->ptr_src_widget_->removeEventFilter(this);
+
+		ptr_d_->Stop();
+	}
+
+	bool CEchoWidget::IsMapping()
+	{
+		return ptr_d_->is_mapping_;
+	}
+
+	void CEchoWidget::paintEvent(QPaintEvent* ptr_event)
+	{
+
+	}
+
+	void CEchoWidget::closeEvent(QCloseEvent* ptr_event)
+	{
+		StopMap();
+
+		QWidget::closeEvent(ptr_event);
+	}
+
+	void CEchoWidget::resizeEvent(QResizeEvent* ptr_event)
+	{
+		QMutexLocker locker(&ptr_d_->ptr_mutex_);
+
+		QWidget::resizeEvent(ptr_event);
+
+		ptr_d_->q_width_ = width();
+		ptr_d_->q_height_ = height();
+		ptr_d_->resize_ = true;
+	}
+
+	void CEchoWidget::enterEvent(QEvent* ptr_event)
+	{
+		QWidget::enterEvent(ptr_event);
+
+		emit SignalEnter();
+	}
+
+	bool CEchoWidget::eventFilter(QObject* ptr_watched, QEvent* ptr_event)
+	{
+		if (ptr_d_->is_mapping_ && ptr_watched == ptr_d_->ptr_src_widget_)
+		{
+			switch (ptr_event->type())
+			{
+			case QEvent::Resize:
+			{
+				QResizeEvent* ptr_resize_event = static_cast<QResizeEvent*>(ptr_event);
+
+				ptr_d_->src_width_ = ptr_resize_event->size().width();
+				ptr_d_->src_height_ = ptr_resize_event->size().height();
+
+				ptr_d_->resize_ = true;
+			}
+				break;
+			default:
+				break;
+			}
+		}
+
+		return QWidget::eventFilter(ptr_watched, ptr_event);
+	}
+
+	// 返回当前错误码
+	int CEchoWidget::GetLastErrorCode()
+	{
+		return ptr_d_->error_code_;
+	}
+
+	// 限制光标移动范围
+	bool CEchoWidget::GrabCursor()
+	{
+		if (ptr_d_->is_mapping_)
+		{
+			ptr_d_->is_grab_mouse_ = true;
+
+			return true;
+		}
+
+		return false;
+	}
+
+	bool CEchoWidget::IsGrabbing()
+	{
+		return ptr_d_->is_grab_mouse_;
+	}
+
+	// 解除限制光标移动范围
+	void CEchoWidget::ReleaseCursor()
+	{
+		ptr_d_->is_grab_mouse_ = false;
+	}
+
+	bool CEchoWidget::SetFPS(int fps)
+	{
+		if (fps < 1)
+		{
+			return false;
+		}
+
+		ptr_d_->fps_ = fps;
+		return true;
+	}
+
+	int CEchoWidget::GetFPS()
+	{
+		return ptr_d_->fps_;
+	}
+}
