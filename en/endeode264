@@ -1,0 +1,473 @@
+#pragma once
+#include <QObject>
+
+#ifdef __cplusplus
+#define __STDINT_MACROS
+#define __STDC_CONSTANT_MACROS
+#endif
+
+#ifndef INT64_C
+#define INT64_C(c) (c ## LL)
+#define UINT64_C(c) (c ## ULL)
+#endif
+
+#include <iostream>
+#include <stdint.h>
+#include <fstream>
+
+extern "C" {
+#include "libx264/x264.h"
+#include <libswscale/swscale.h>
+#include <libavcodec/avcodec.h>
+#include <libavutil/frame.h>
+}
+
+
+class x264Decoder {
+
+public:
+
+	void initialize(int w, int h);
+	bool decodeFrame(char *src_buffer, unsigned int size, char *rgb_buffer);
+private:
+	AVFrame* av_frame_;
+	AVFrame *av_frame_RGB_;
+
+	// Use this context to convert your BGR Image to YUV image since x264 do not support RGB input
+	AVCodec* av_codec_ = NULL;
+	AVCodecContext* av_codec_context_ = NULL;
+	AVCodecParserContext* m_pCodecParserCtx = NULL;
+	SwsContext* convert_context_;
+	int image_w_;
+	int image_h_;
+	int rgb_size_;
+};
+
+#include "x264Decoder.h"
+
+static AVFrame * icv_alloc_picture_FFMPEG(int pix_fmt, int width, int height, bool alloc)
+{
+	AVFrame * picture;
+	uint8_t * picture_buf;
+	int size;
+
+	picture = new AVFrame[1];
+	if (!picture)
+		return NULL;
+	size = avpicture_get_size((enum AVPixelFormat)pix_fmt, width, height);
+	if (alloc)
+	{
+		picture_buf = (uint8_t *)malloc(size);
+		if (!picture_buf)
+		{
+			delete[] picture;
+			std::cout << "picture buff = NULL" << std::endl;
+			return NULL;
+		}
+		avpicture_fill((AVPicture *)picture, picture_buf, (enum AVPixelFormat)pix_fmt, width, height);
+	}
+	return picture;
+}
+
+/*********
+
+You may need to pre-process the RTP payload(s) (re-assemble fragmented NALUs, 
+split aggregated NALUs) before passing NAL units to the decoder if you use packetization modes other than single NAL unit mode. 
+The NAL unit types (STAP, MTAP, FU) allowed in the stream depends on the packetization mode.
+Read RFC 6184 for more info on packetization modes.
+
+*************/
+void x264Decoder::initialize(int w, int h)
+{
+	avcodec_register_all();
+	image_h_ = h;
+	image_w_ = w;
+
+	rgb_size_ = avpicture_get_size(AV_PIX_FMT_RGB32, image_w_, image_h_);
+	av_codec_ = avcodec_find_decoder(AV_CODEC_ID_H264);
+
+	// SPS PPS 会附带在h264中发过来 
+	av_codec_context_ = avcodec_alloc_context3(av_codec_);
+	av_codec_context_->extradata = NULL;   
+	av_codec_context_->pix_fmt = AV_PIX_FMT_YUV420P;
+	avcodec_open2(av_codec_context_, av_codec_, NULL);
+
+	m_pCodecParserCtx = av_parser_init(AV_CODEC_ID_H264);
+
+	convert_context_ = sws_getContext(image_w_, image_h_, AV_PIX_FMT_YUV420P, image_w_, image_h_, AV_PIX_FMT_RGB32, SWS_FAST_BILINEAR, NULL, NULL, NULL);
+
+	av_frame_ = av_frame_alloc();
+	av_frame_RGB_ = icv_alloc_picture_FFMPEG(AV_PIX_FMT_RGB32, image_w_, image_h_, true);
+}
+
+// 保证是完成帧   且每个unit带startcode
+bool x264Decoder::decodeFrame(char *src_buffer, unsigned int size, char *rgb_buffer)
+{
+	AVPacket av_packet;
+	av_init_packet(&av_packet);
+	av_packet.data = (uint8_t *)src_buffer;
+	av_packet.size = size;
+
+	// 看包信息  难道就是传说中的SPS PPS？
+	//av_parser_parse2(m_pCodecParserCtx, m_pCodecCtx, &av_packet.data, &av_packet.size, (uint8_t *)buf, buf_len,
+	//	AV_NOPTS_VALUE, AV_NOPTS_VALUE, AV_NOPTS_VALUE);
+
+
+	int frame_finished = 0;
+	int av_return = avcodec_decode_video2(av_codec_context_, av_frame_, &frame_finished, &av_packet);
+	if (av_return <= 0 || !frame_finished)
+		return false;
+	//Convert the frame from YUV420 to RGB24
+	sws_scale(convert_context_, av_frame_->data, av_frame_->linesize, 0, image_h_, av_frame_RGB_->data, av_frame_RGB_->linesize);
+	//Manadatory function to copy the image form an AVFrame to a generic buffer.
+	avpicture_layout((AVPicture *)av_frame_RGB_, AV_PIX_FMT_RGB32, image_w_, image_h_, (unsigned char *)rgb_buffer, rgb_size_);
+
+	return true;
+}
+
+
+
+-----------------------------------------------------------------
+#pragma once
+#include <QObject>
+
+#include <queue>
+#include <stdint.h>
+#include "libx264/x264.h"
+
+class x264Encoder : public QObject {
+	Q_OBJECT
+
+public:
+	x264Encoder(QObject * parent = Q_NULLPTR);
+	~x264Encoder();
+
+public:
+	void initilize();
+	void unInitilize();
+	void encodeFrame(char* buffer, int size);
+	bool isNalsAvailableInOutputQueue();
+	x264_nal_t getNalUnit();
+private:
+	// Use this context to convert your BGR Image to YUV image since x264 do not support RGB input
+	std::queue<x264_nal_t> outputQueue;
+	x264_param_t parameters;
+	x264_picture_t picture_in, picture_out;
+	x264_t* encoder;
+	
+};
+
+
+#include "x264Encoder.h"
+
+#ifdef __cplusplus 
+extern "C" {
+#endif
+
+#include <libavcodec/avcodec.h>
+#include <libavutil/opt.h>
+#include <libavutil/imgutils.h>
+#include <libswscale/swscale.h> 
+
+	static bool x264C_ConvertRGBToYUV(int width, int height, char* buffer, x264_picture_t& picture_in)
+	{
+		AVFrame *pFrameRGB = new AVFrame[1];
+
+		avpicture_fill((AVPicture *)pFrameRGB, (uint8_t *)buffer, AV_PIX_FMT_RGB32, width, height);
+
+		SwsContext *img_convert_ctx = sws_getContext(width, height, AV_PIX_FMT_RGB32, width, height, AV_PIX_FMT_YUV420P, SWS_POINT, NULL, NULL, NULL);
+
+		int out_height = sws_scale(img_convert_ctx,
+			(uint8_t const * const *)pFrameRGB->data,
+			pFrameRGB->linesize,
+			0,
+			height,
+			picture_in.img.plane,
+			picture_in.img.i_stride);
+
+		sws_freeContext(img_convert_ctx);
+
+		delete[] pFrameRGB;
+
+		if (out_height > 0)
+		{
+			return true;
+		}
+
+		return false;
+	}
+
+#ifdef __cplusplus 
+}
+#endif
+
+x264Encoder::x264Encoder(QObject * parent) : QObject(parent) {
+	
+}
+
+x264Encoder::~x264Encoder() {
+	
+}
+
+void x264Encoder::initilize()
+{
+	int width = 640;
+	int height = 480;
+
+	x264_param_default_preset(&parameters, "veryfast", "zerolatency");
+	parameters.i_log_level = X264_LOG_INFO;
+	parameters.i_threads = 1;
+	parameters.i_width = width;
+	parameters.i_height = height;
+	parameters.i_fps_num = 25;
+	parameters.i_fps_den = 1;
+	parameters.i_keyint_max = 25;
+	parameters.b_intra_refresh = 1;
+	parameters.i_frame_total = 0;     // 总帧数   
+	parameters.i_bframe = 0;   // b帧
+	parameters.i_slice_max_size = 1390;   // 具体怎么算不太清楚  反正这个值适合NAL unit
+
+	parameters.rc.i_rc_method = X264_RC_CRF;
+	parameters.rc.i_vbv_buffer_size = 1000000;
+	parameters.rc.i_vbv_max_bitrate = 90000;
+	parameters.rc.f_rf_constant = 25;
+	parameters.rc.f_rf_constant_max = 35;
+	parameters.i_sps_id = 7;
+	// the following two value you should keep 1
+	parameters.b_repeat_headers = 1;    // to get header before every I-Frame
+	parameters.b_annexb = 1; // put start code in front of nal. we will remove start code later
+	x264_param_apply_profile(&parameters, "baseline");
+
+	encoder = x264_encoder_open(&parameters);
+	x264_picture_alloc(&picture_in, X264_CSP_I420, parameters.i_width, parameters.i_height);
+	picture_in.i_type = X264_TYPE_AUTO;
+	picture_in.img.i_csp = X264_CSP_I420;
+
+	x264_picture_alloc(&picture_in, X264_CSP_I420, width, height);
+	picture_in.i_type = X264_TYPE_AUTO;
+	picture_in.img.i_csp = X264_CSP_I420;
+}
+
+void x264Encoder::unInitilize()
+{
+	x264_encoder_close(encoder);
+}
+
+void x264Encoder::encodeFrame(char* buffer, int size)
+{
+	int srcStride = parameters.i_width * 4;
+
+	x264_nal_t* nals;
+	int i_nals = 0;
+	int frameSize = -1;
+
+	int width = 640;
+	int height = 480;
+
+	/////////////////////////////
+	
+	bool r =x264C_ConvertRGBToYUV(width, height, buffer, picture_in);
+
+	/////////////////////////////
+
+	frameSize = x264_encoder_encode(encoder, &nals, &i_nals, &picture_in, &picture_out);
+	if (frameSize > 0)
+	{
+		for (int i = 0; i < i_nals; i++)
+		{
+			outputQueue.push(nals[i]);
+		}
+	}
+}
+
+bool x264Encoder::isNalsAvailableInOutputQueue()
+{
+	if (outputQueue.empty() == true)
+	{
+		return false;
+	}
+	else
+	{
+		return true;
+	}
+}
+
+x264_nal_t x264Encoder::getNalUnit()
+{
+	x264_nal_t nal;
+	nal = outputQueue.front();
+	outputQueue.pop();
+	return nal;
+}
+
+//typedef struct x264_param_t
+//{
+//	/* CPU 标志位 */
+//	unsigned int cpu;
+//	int         i_threads;       /* 并行编码多帧 */
+//	int         b_deterministic; /*是否允许非确定性时线程优化*/
+//	int         i_sync_lookahead; /* 线程超前缓冲 */
+//
+//								  /* 视频属性 */
+//	int         i_width; /* 宽度*/
+//	int         i_height; /* 高度*/
+//	int         i_csp;  /* 编码比特流的CSP,仅支持i420，色彩空间设置 */
+//	int         i_level_idc; /* level值的设置*/
+//	int         i_frame_total; /* 编码帧的总数, 默认 0 */
+//							   /*Vui参数集视频可用性信息视频标准化选项 */
+//	struct
+//	{
+//		/* they will be reduced to be 0 < x <= 65535 and prime */
+//		int         i_sar_height;
+//		int         i_sar_width; /* 设置长宽比 */
+//
+//		int         i_overscan;    /* 0=undef, 1=no overscan, 2=overscan 过扫描线，默认"undef"(不设置)，可选项：show(观看)/crop(去除)*/
+//
+//								   /*见以下的值h264附件E */
+//		Int       i_vidformat;/* 视频格式，默认"undef"，component/pal/ntsc/secam/mac/undef*/
+//		int       b_fullrange; /*Specify full range samples setting，默认"off"，可选项：off/on*/
+//		int       i_colorprim; /*原始色度格式，默认"undef"，可选项：undef/bt709/bt470m/bt470bg，smpte170m/smpte240m/film*/
+//		int   i_transfer; /*转换方式，默认"undef"，可选项：undef/bt709/bt470m/bt470bg/linear,log100/log316/smpte170m/smpte240m*/
+//		int  i_colmatrix; /*色度矩阵设置，默认"undef",undef/bt709/fcc/bt470bg,smpte170m/smpte240m/GBR/YCgCo*/
+//		int         i_chroma_loc;    /* both top & bottom色度样本指定，范围0~5，默认0 */
+//	} vui;
+//
+//	int         i_fps_num;
+//	int         i_fps_den;
+//	/*这两个参数是由fps帧率确定的，赋值的过程见下：
+//	{        float fps;
+//	if( sscanf( value, "%d/%d", &p->i_fps_num, &p->i_fps_den ) == 2 )
+//	;
+//	else if( sscanf( value, "%f", &fps ) )
+//	{
+//	p->i_fps_num = (int)(fps * 1000 + .5);
+//	p->i_fps_den = 1000;
+//	}
+//	else
+//	b_error = 1;
+//	}
+//	Value的值就是fps。*/
+//
+//	/*流参数 */
+//	int         i_frame_reference;  /* 参考帧最大数目 */
+//	int         i_keyint_max;       /* 在此间隔设置IDR关键帧 */
+//	int         i_keyint_min;       /* 场景切换少于次值编码位I, 而不是 IDR. */
+//	int         i_scenecut_threshold; /*如何积极地插入额外的I帧 */
+//	int         i_bframe;   /*两个相关图像间P帧的数目 */
+//	int         i_bframe_adaptive; /*自适应B帧判定*/
+//	int         i_bframe_bias; /*控制插入B帧判定，范围-100~+100，越高越容易插入B帧，默认0*/
+//	int         b_bframe_pyramid;   /*允许部分B为参考帧 */
+//									/*去块滤波器需要的参数*/
+//	int         b_deblocking_filter;
+//	int         i_deblocking_filter_alphac0;    /* [-6, 6] -6 light filter, 6 strong */
+//	int         i_deblocking_filter_beta;       /* [-6, 6]  idem */
+//												/*熵编码 */
+//	int         b_cabac;
+//	int         i_cabac_init_idc;
+//
+//	int         b_interlaced; /* 隔行扫描 */
+//							  /*量化 */
+//	int         i_cqm_preset;         /*自定义量化矩阵(CQM),初始化量化模式为flat*/
+//	char        *psz_cqm_file;      /* JM format读取JM格式的外部量化矩阵文件，自动忽略其他—cqm 选项*/
+//	uint8_t     cqm_4iy[16];        /* used only if i_cqm_preset == X264_CQM_CUSTOM */
+//	uint8_t     cqm_4ic[16];
+//	uint8_t     cqm_4py[16];
+//	uint8_t     cqm_4pc[16];
+//	uint8_t     cqm_8iy[64];
+//	uint8_t     cqm_8py[64];
+//
+//	/* 日志 */
+//	void(*pf_log)(void *, int i_level, const char *psz, va_list);
+//	void        *p_log_private;
+//	int         i_log_level;
+//	int         b_visualize;
+//	char        *psz_dump_yuv;  /* 重建帧的名字 */
+//
+//								/* 编码分析参数*/
+//	struct
+//	{
+//		unsigned int intra;     /* 帧间分区*/
+//		unsigned int inter;     /* 帧内分区 */
+//
+//		int          b_transform_8x8; /* 帧间分区*/
+//		int          b_weighted_bipred; /*为b帧隐式加权 */
+//		int          i_direct_mv_pred; /*时间空间队运动预测 */
+//		int          i_chroma_qp_offset; /*色度量化步长偏移量 */
+//
+//		int          i_me_method; /* 运动估计算法 (X264_ME_*) */
+//		int          i_me_range; /* 整像素运动估计搜索范围 (from predicted mv) */
+//		int          i_mv_range; /* 运动矢量最大长度(in pixels). -1 = auto, based on level */
+//		int          i_mv_range_thread; /* 线程之间的最小空间. -1 = auto, based on number of threads. */
+//		int          i_subpel_refine; /* 亚像素运动估计质量 */
+//		int          b_chroma_me; /* 亚像素色度运动估计和P帧的模式选择 */
+//		int          b_mixed_references; /*允许每个宏块的分区在P帧有它自己的参考号*/
+//		int          i_trellis;  /* Trellis量化，对每个8x8的块寻找合适的量化值，需要CABAC，默认0 0：关闭1：只在最后编码时使用2：一直使用*/
+//		int          b_fast_pskip; /*快速P帧跳过检测*/
+//		int          b_dct_decimate; /* 在P-frames转换参数域 */
+//		int          i_noise_reduction; /*自适应伪盲区 */
+//		float        f_psy_rd; /* Psy RD strength */
+//		float        f_psy_trellis; /* Psy trellis strength */
+//		int          b_psy; /* Toggle all psy optimizations */
+//
+//							/*，亮度量化中使用的无效区大小*/
+//		int          i_luma_deadzone[2]; /* {帧间, 帧内} */
+//
+//		int          b_psnr;    /* 计算和打印PSNR信息 */
+//		int          b_ssim;    /*计算和打印SSIM信息*/
+//	} analyse;
+//
+//	/* 码率控制参数 */
+//	struct
+//	{
+//		int         i_rc_method;    /* X264_RC_* */
+//
+//		int         i_qp_constant;  /* 0-51 */
+//		int         i_qp_min;       /*允许的最小量化值 */
+//		int         i_qp_max;       /*允许的最大量化值*/
+//		int         i_qp_step;      /*帧间最大量化步长 */
+//
+//		int         i_bitrate;  /*设置平均码率 */
+//		float       f_rf_constant;  /* 1pass VBR, nominal QP */
+//		float       f_rate_tolerance;
+//		int         i_vbv_max_bitrate; /*平均码率模式下，最大瞬时码率，默认0(与-B设置相同) */
+//		int         i_vbv_buffer_size; /*码率控制缓冲区的大小，单位kbit，默认0 */
+//		float       f_vbv_buffer_init; /* <=1: fraction of buffer_size. >1: kbit码率控制缓冲区数据保留的最大数据量与缓冲区大小之比，范围0~1.0，默认0.9*/
+//		float       f_ip_factor;
+//		float       f_pb_factor;
+//
+//		int         i_aq_mode;      /* psy adaptive QP. (X264_AQ_*) */
+//		float       f_aq_strength;
+//		int         b_mb_tree;      /* Macroblock-tree ratecontrol. */
+//		int         i_lookahead;
+//
+//		/* 2pass 多次压缩码率控制 */
+//		int         b_stat_write;   /* Enable stat writing in psz_stat_out */
+//		char        *psz_stat_out;
+//		int         b_stat_read;    /* Read stat from psz_stat_in and use it */
+//		char        *psz_stat_in;
+//
+//		/* 2pass params (same as ffmpeg ones) */
+//		float       f_qcompress;    /* 0.0 => cbr, 1.0 => constant qp */
+//		float       f_qblur;        /*时间上模糊量化 */
+//		float       f_complexity_blur; /* 时间上模糊复杂性 */
+//		x264_zone_t *zones;         /* 码率控制覆盖 */
+//		int         i_zones;        /* number of zone_t's */
+//		char        *psz_zones;     /*指定区的另一种方法*/
+//	} rc;
+//
+//	/* Muxing parameters */
+//	int b_aud;                  /*生成访问单元分隔符*/
+//	int b_repeat_headers;       /* 在每个关键帧前放置SPS/PPS*/
+//	int i_sps_id;               /* SPS 和 PPS id 号 */
+//
+//								/*切片（像条）参数 */
+//	int i_slice_max_size;    /* 每片字节的最大数，包括预计的NAL开销. */
+//	int i_slice_max_mbs;     /* 每片宏块的最大数，重写 i_slice_count */
+//	int i_slice_count;       /* 每帧的像条数目: 设置矩形像条. */
+//
+//							 /* Optional callback for freeing this x264_param_t when it is done being used.
+//							 * Only used when the x264_param_t sits in memory for an indefinite period of time,
+//							 * i.e. when an x264_param_t is passed to x264_t in an x264_picture_t or in zones.
+//							 * Not used when x264_encoder_reconfig is called directly. */
+//	void(*param_free)(void*);
+//} x264_param_t;
