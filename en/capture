@@ -1,0 +1,226 @@
+#pragma once
+
+#include "AbstractCapture.h"
+
+#include <dwmapi.h>
+
+namespace tvwalllib
+{
+	class GDICapture : public AbstractCapture
+	{
+	public:
+		GDICapture();
+		~GDICapture();
+
+		bool Init();
+		void Uninit();
+
+		void SetWidth(int width);
+		int GetWidth() const {
+			return width_;
+		}
+
+		void SetHeight(int height);
+		int GetHeight() const {
+			return height_;
+		}
+
+		virtual bool CaptureWithRGBBuffer(StoreBufferStruct*) override;
+
+	private:
+		HDC hdc_device;
+		HDC hdc_device_compatible = NULL;
+		HBITMAP hbitmap_device = NULL;
+		BITMAP bitmap_device;
+
+		HANDLE hDIB;
+		char *lpbitmap = NULL;
+		DWORD dwBmpSize = 0;
+
+		BITMAPINFOHEADER bi;
+
+		bool is_inited_ = false;
+		int width_ = 0;
+		int height_ = 0;
+	};
+}
+
+----------------------------------
+
+#include "GDICapture.h"
+
+#include "common/ImageConvertor.h"
+
+#include <QDebug>
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+static int fps = 0;
+
+namespace tvwalllib
+{
+
+	GDICapture::GDICapture() :
+		AbstractCapture()
+	{
+
+	}
+
+	GDICapture::~GDICapture()
+	{
+		Uninit();
+	}
+
+	void GDICapture::SetWidth(int width)
+	{
+		width_ = width;
+	}
+
+	void GDICapture::SetHeight(int height)
+	{
+		height_ = height;
+	}
+
+	bool GDICapture::Init()
+	{
+		if (is_inited_)
+		{
+			return true;
+		}
+
+		hdc_device = GetDC(GetWID());
+
+		// Create a compatible DC which is used in a BitBlt from the window DC
+		hdc_device_compatible = CreateCompatibleDC(hdc_device);
+		if (!hdc_device_compatible)
+		{
+			Uninit();
+			return false;
+		}
+
+		// Create a compatible bitmap from the Window DC
+		hbitmap_device = CreateCompatibleBitmap(hdc_device, width_, height_);
+
+		if (!hbitmap_device)
+		{
+			Uninit();
+			return false;
+		}
+
+		// Select the compatible bitmap into the compatible memory DC.
+		SelectObject(hdc_device_compatible, hbitmap_device);
+
+		// Bit block transfer into our compatible memory DC.
+		if (!BitBlt(hdc_device_compatible,
+			0, 0,
+			width_, height_,
+			hdc_device,
+			0, 0,
+			SRCCOPY))
+		{
+			Uninit();
+			return false;
+		}
+
+		// Get the BITMAP from the HBITMAP
+		GetObject(hbitmap_device, sizeof(BITMAP), &bitmap_device);
+
+		bi.biSize = sizeof(BITMAPINFOHEADER);
+		bi.biWidth = width_;//bitmap_device.bmWidth;
+		bi.biHeight = -height_;//-bitmap_device.bmHeight;     // 微软从下往上读   所以这里要倒过来（否则server端createbitmap是反的）
+		bi.biPlanes = 1;
+		bi.biBitCount = 32;
+		bi.biCompression = BI_RGB;
+		bi.biSizeImage = 0;
+		bi.biXPelsPerMeter = 0;
+		bi.biYPelsPerMeter = 0;
+		bi.biClrUsed = 0;
+		bi.biClrImportant = 0;
+
+		//每次计算内存，当宽度为奇数时补齐，正常宽度为w*h*4  ()
+		//dwBmpSize = GetRGBBufferLength(bitmap_device.bmWidth, bitmap_device.bmHeight);
+		dwBmpSize = ImageConvertor::GetRGBBufferLength(width_, height_, 32);
+
+		// Starting with 32-bit Windows, GlobalAlloc and LocalAlloc are implemented as wrapper functions that 
+		// call HeapAlloc using a handle to the process's default heap. Therefore, GlobalAlloc and LocalAlloc 
+		// have greater overhead than HeapAlloc.
+		if (lpbitmap != NULL)
+		{
+			GlobalUnlock(hDIB);
+			GlobalFree(hDIB);
+		}
+
+		hDIB = GlobalAlloc(GHND, dwBmpSize);
+		lpbitmap = (char *)GlobalLock(hDIB);
+
+		is_inited_ = true;
+		return is_inited_;
+	}
+
+	void GDICapture::Uninit()
+	{
+		if (is_inited_)
+		{
+			DeleteObject(hbitmap_device);
+			DeleteObject(hdc_device_compatible);
+
+			ReleaseDC(NULL, hdc_device);
+
+			if (lpbitmap != NULL)
+			{
+				GlobalUnlock(hDIB);
+				GlobalFree(hDIB);
+
+				lpbitmap = NULL;
+			}
+
+			is_inited_ = false;
+		}
+	}
+
+	bool GDICapture::CaptureWithRGBBuffer(StoreBufferStruct* ptr_capture)
+	{
+		bool result = false;
+		do
+		{
+			if (Init())
+			{
+				if (!BitBlt(hdc_device_compatible,
+					0, 0,
+					width_, height_,
+					hdc_device,
+					0, 0,
+					SRCCOPY))  //CAPTUREBLT   仅使用SRCCOPY标志时，Windows只需要从M中拷贝屏幕图像就行了。而若使用了CAPTUREBLT标志，导致的结果是鼠标及半透明窗口均被捕捉下来。但在设计上，BitBlt函数是不允许捕捉鼠标的。于是，系统只好先隐藏鼠标，然后捕捉图像，再恢复鼠标，结果就导致了鼠标的闪烁
+				{
+					Uninit();
+					break;
+				}
+
+				// 直接在截图中绘制光标
+				//GetCursorPos(&ptCursor);
+				//DrawIconEx(hDCMem, ptCursor.x, ptCursor.y, hCursor, 0, 0, 0, NULL, DI_NORMAL | DI_COMPAT | DI_DEFAULTSIZE);
+
+				int line = GetDIBits(hdc_device, hbitmap_device, 0,
+					height_,//(UINT)bitmap_device.bmHeight,
+					ptr_capture->ptr_buffer,
+					(BITMAPINFO *)&bi, DIB_RGB_COLORS);
+
+				if (line == 0)
+				{
+					qDebug() << GetLastError();
+					Uninit();
+					break;
+				}
+
+				ptr_capture->now_size = dwBmpSize;
+
+				result = true;
+			}
+		} while (0);
+
+		return result;
+	}
+
+}
