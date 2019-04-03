@@ -1,0 +1,27 @@
+Qt command编译
+	1. vs下的qt.pro怎么用
+	vs中安装qt插件后右键工程选择create basic .pro file
+	2. 指令如何通过winscp传输
+	3. qmake
+	qmake -o /mydata/projects/Demo1_Build_Release/Makefile /mydata/projects/Demo1/Demo1.pro
+	解释： -o 指定输出的makefile文件   用-r 则生成到当前路径
+	4. make 包括shadowbuild
+	make -C /mydata/projects/Demo1_Build_Release/ -f /mydata/projects/Demo1_Build_Release/Makefile
+	解释：-C 指定目录   -f 指定文件   
+	注意： 只用-C   报错 make: Nothing to be done for …
+		a.    只用-f    报错 提示找不到文件
+	5. 部署
+	"E:\Virtual Machines\winscp\WinSCP.exe" ^
+	/console /command "option batch continue" ^
+	 "option confirm off" ^
+	 "open sftp://root:Abc12345@47.244.98.61:22" ^
+	 "option transfer binary" ^
+	 "put E:\Qt\server\qtapp\QtWebApp\QtWebApp\Demo1\Demo1.pro /mydata/projects/Demo1/" ^
+	 "put E:\Qt\server\qtapp\QtWebApp\QtWebApp\Demo1\src /mydata/projects/Demo1/" ^
+	 "call mkdir /mydata/projects/Demo1_Build_Release" ^
+	 "call qmake -o /mydata/projects/Demo1_Build_Release/Makefile /mydata/projects/Demo1/Demo1.pro" ^
+	 "call make -C /mydata/projects/Demo1_Build_Release/ -f /mydata/projects/Demo1_Build_Release/Makefile" ^
+	 "call cp -f /mydata/projects/Demo1_Build_Release/Demo1 /mydata/unix/Demo1" ^
+	 "call kill -9 $(pidof Demo1)" ^
+	 "call /mydata/unix/Demo1" ^
+ "exit"
