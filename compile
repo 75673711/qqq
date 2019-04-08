@@ -1,7 +1,8 @@
 Qt command编译
 	1. vs下的qt.pro怎么用
 	vs中安装qt插件后右键工程选择create basic .pro file
-	2. 指令如何通过winscp传输
+	2. 指令如何通过winscp传输（https://github.com/winscp/winscp）
+	a)GUI界面手动拖动 b)命令行     
 	3. qmake
 	qmake -o /mydata/projects/Demo1_Build_Release/Makefile /mydata/projects/Demo1/Demo1.pro
 	解释： -o 指定输出的makefile文件   用-r 则生成到当前路径
@@ -24,4 +25,7 @@ Qt command编译
 	 "call cp -f /mydata/projects/Demo1_Build_Release/Demo1 /mydata/unix/Demo1" ^
 	 "call kill -9 $(pidof Demo1)" ^
 	 "call /mydata/unix/Demo1" ^
- "exit"
+	 "exit"
+6.连接动态库别他妈加lib    
+LIBS += -L$$PWD/libs/unix/pgsql          -L路径
+LIBS  += -lpq                                           -l库名
