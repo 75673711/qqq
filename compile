@@ -29,3 +29,87 @@ Qt command编译
 6.连接动态库别他妈加lib    
 LIBS += -L$$PWD/libs/unix/pgsql          -L路径
 LIBS  += -lpq                                           -l库名
+
+
+# This project demonstrates how to use QtWebAppLib by including the
+# sources into this project.
+
+TARGET = Demo1
+TEMPLATE = app
+QT = core network
+CONFIG += console
+
+HEADERS += \
+           src/requestmapper.h \
+           src/controller/dumpcontroller.h \
+           src/controller/templatecontroller.h \
+           src/controller/formcontroller.h \
+           src/controller/fileuploadcontroller.h \
+           src/controller/sessioncontroller.h \
+           src/controller/bt/btcontroller.h \
+    src/support/threadpool/BCThreadPool.h \
+    src/support/Singleton.h \
+    src/support/btdownloader/BtDownloader.h \
+    src/support/Common.h \
+    src/support/postgresql/PostgresqlManager.h \
+    src/support/postgresql/PostgresqlExecutor.h \
+    src/support/postgresql/user/UserSql.h \
+    src/controller/user/logincontroller.h
+
+SOURCES += src/main.cpp \
+           src/requestmapper.cpp \
+           src/controller/dumpcontroller.cpp \
+           src/controller/templatecontroller.cpp \
+           src/controller/formcontroller.cpp \
+           src/controller/fileuploadcontroller.cpp \
+           src/controller/sessioncontroller.cpp \
+           src/controller/bt/btcontroller.cpp \
+    src/support/threadpool/BCThreadPool.cpp \
+    src/support/Singleton.cpp \
+    src/support/btdownloader/BtDownloader.cpp \
+    src/support/Common.cpp \
+    src/support/postgresql/PostgresqlManager.cpp \
+    src/support/postgresql/PostgresqlExecutor.cpp \
+    src/support/postgresql/user/UserSql.cpp \
+    src/controller/user/logincontroller.cpp
+
+OTHER_FILES += etc/* etc/docroot/* etc/templates/* etc/ssl/* logs/* ../readme.txt
+
+#指定产生moc文件路径
+MOC_DIR +=  ./test/build/moc
+
+#添加moc依赖路径
+INCLUDEPATH += . \
+    ./test/build/moc
+
+#指定产生.o中间文件路径
+OBJECTS_DIR += ./test/build/obj
+
+#指定成果物路径
+DESTDIR = ./test/output/
+
+win32 {
+INCLUDEPATH += . \
+    ./include/win
+
+LIBS += -L$$PWD/libs/win/pgsql -llibpq
+}
+
+unix {
+#INCLUDEPATH += /usr/include/
+
+INCLUDEPATH += . \
+    ./include/unix
+
+LIBS += -L$$PWD/libs/unix/pgsql
+LIBS  += -lpq
+}
+
+#---------------------------------------------------------------------------------------
+# The following lines include the sources of the QtWebAppLib library
+#---------------------------------------------------------------------------------------
+
+include(./src/QtWebApp/logging/logging.pri)
+include(./src/QtWebApp/httpserver/httpserver.pri)
+include(./src/QtWebApp/templateengine/templateengine.pri)
+# Not used: include(../QtWebApp/qtservice/qtservice.pri)
