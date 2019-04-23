@@ -1,0 +1,11 @@
+启动端口  8300 8301 8302 8500
+注册服务  consul services register -name=web -port=8080
+查看DNS dig @127.0.0.1 -p 8600 web.service.consul
+https://www.consul.io/docs/commands/services/register.html
+
+
+[root@localhost ~]# iptables -t nat -A PREROUTING -p udp -m udp --dport 53 -j REDIRECT --to-ports 8600
+[root@localhost ~]# iptables -t nat -A PREROUTING -p tcp -m tcp --dport 53 -j REDIRECT --to-ports 8600
+[root@localhost ~]# iptables -t nat -A OUTPUT -d localhost -p udp -m udp --dport 53 -j REDIRECT --to-ports 8600
+[root@localhost ~]# iptables -t nat -A OUTPUT -d localhost -p tcp -m tcp --dport 53 -j REDIRECT --to-ports 8600
+todo:如何生效
