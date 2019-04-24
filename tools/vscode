@@ -1,0 +1,11 @@
+1.rmate---------------------
+安装rmate 
+下载openssh    https://www.mls-software.com/opensshd.html
+登陆ssh -R 52698:127.0.0.1:52698 root@192.168.56.101 -p 55555
+linux安装rmate脚本 
+wget -O /usr/local/bin/rmate https://raw.github.com/aurora/rmate/master/rmate
+chmod a+x /usr/local/bin/rmate
+打开文件  rmate /root/mydata/demo.cpp
+
+2.工程配置------------------------
+指定文件夹后   .vscode/c_cpp_properties.json    在includePath中添加头文件路径
