@@ -1,0 +1,97 @@
+cmake_minimum_required(VERSION 3.12)
+project(BeeRestAPI)
+
+# 指定release版本   外部执行时指定版本 cmake ./ -DCMAKE_BUILD_TYPE=Debug   默认release
+#SET(CMAKE_BUILD_TYPE "Debug")
+
+# 编译版本指令
+SET(CMAKE_CXX_FLAGS_DEBUG "$ENV{CXXFLAGS} -O0 -Wall -g -ggdb")
+SET(CMAKE_CXX_FLAGS_RELEASE "$ENV{CXXFLAGS} -O3 -Wall")
+
+# 指定编译选项
+add_compile_options(-std=c++11)
+
+# 预置宏定义
+IF (CMAKE_BUILD_TYPE STREQUAL Debug)   
+    ADD_DEFINITIONS(-DBLABLA)          
+ENDIF()
+
+# 文件后缀  或者属性中设置DEBUG_POSTFIX
+set(CMAKE_DEBUG_POSTFIX "_d")
+set(CMAKE_RELEASE_POSTFIX "")
+
+# 源文件及目标   SHARED 指定动态库  默认静态库
+#-----exe
+#add_executable(BeeRestAPI ${PROJECT_SOURCE_DIR}/src/tmp.cpp ${PROJECT_SOURCE_DIR}/src/tmp.h)
+#-----exe
+#file(GLOB BeeRestAPI_SRC "${PROJECT_SOURCE_DIR}/src/*.h" "${PROJECT_SOURCE_DIR}/src/*.cpp")
+#add_executable(BeeRestAPI ${BeeRestAPI_SRC})
+#-----lib
+ADD_DEFINITIONS(-DNEED_EXPORT)
+add_library(BeeRestAPI SHARED ${PROJECT_SOURCE_DIR}/src/tmp.cpp ${PROJECT_SOURCE_DIR}/src/tmp.h)
+
+# 导出符号控制  默认不导出
+set_target_properties(BeeRestAPI PROPERTIES
+    CXX_VISIBILITY_PRESET "hidden"
+    VISIBILITY_INLINES_HIDDEN "hidden"
+    )
+
+# 头文件
+target_include_directories(BeeRestAPI PRIVATE
+                                ${PROJECT_SOURCE_DIR}/src
+                                /springcloud/demo/bin/include)
+
+# 依赖库
+find_package(Threads)
+target_link_libraries(BeeRestAPI PRIVATE
+                        ${CMAKE_THREAD_LIBS_INIT}
+                        /springcloud/demo/bin/libs/BeeNet64_linux/libBeeNet.so.1.0.0.0
+					    /springcloud/demo/bin/libs/BeeNet64_linux/libcurl.so
+					    /springcloud/demo/bin/libs/BeeNet64_linux/libBase64.so
+                        /springcloud/demo/bin/libs/BeeNet64_linux/libcurl.so.4.5.0
+					    /springcloud/demo/bin/libs/BeeNet64_linux/libnghttp2.so.14.16.0
+					    /springcloud/demo/bin/libs/BeeNet64_linux/libssl.so.1.0.0
+					    /springcloud/demo/bin/libs/BeeNet64_linux/libcrypto.so.1.0.0
+				        /springcloud/demo/bin/libs/BeeNet64_linux/libjsoncpp.so.1.8.4
+				        /springcloud/demo/bin/libs/BeeNet64_linux/libboost_thread.so.1.67.0)
+
+# 生成路径  运行程序  CMAKE_ARCHIVE_OUTPUT_DIRECTORY_DEBUG CMAKE_ARCHIVE_OUTPUT_DIRECTORY_RELEASE 库
+IF (CMAKE_BUILD_TYPE STREQUAL Debug)   
+    #set(RUNTIME_OUTPUT_DIRECTORY  ${PROJECT_SOURCE_DIR}/target/debug)   
+ENDIF()
+IF (CMAKE_BUILD_TYPE STREQUAL Release)   
+    #set(RUNTIME_OUTPUT_DIRECTORY  ${PROJECT_SOURCE_DIR}/target/release)   
+ENDIF()
+
+# 设置属性   注意如果value值为空或者未定义(没用"") 则value被解释为key 导致错误
+IF (CMAKE_BUILD_TYPE STREQUAL Debug) 
+set_target_properties(BeeRestAPI PROPERTIES
+    LIBRARY_OUTPUT_DIRECTORY "${PROJECT_SOURCE_DIR}/target/debug"
+    RUNTIME_OUTPUT_DIRECTORY "${PROJECT_SOURCE_DIR}/target/debug"
+    ARCHIVE_OUTPUT_DIRECTORY "${PROJECT_SOURCE_DIR}/target/debug"
+    )
+ELSE ()
+set_target_properties(BeeRestAPI PROPERTIES
+    LIBRARY_OUTPUT_DIRECTORY "${PROJECT_SOURCE_DIR}/target/release"
+    RUNTIME_OUTPUT_DIRECTORY "${PROJECT_SOURCE_DIR}/target/release"
+    ARCHIVE_OUTPUT_DIRECTORY "${PROJECT_SOURCE_DIR}/target/release"
+    )
+ENDIF()
+
+# 测试文件-------------------------------------
+add_executable(Test ${PROJECT_SOURCE_DIR}/src/main.cpp)
+set_target_properties(Test PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${PROJECT_SOURCE_DIR}/test"
+    )
+
+IF (CMAKE_BUILD_TYPE STREQUAL Debug) 
+target_link_libraries(Test PRIVATE
+                        ${PROJECT_SOURCE_DIR}/target/debug/libBeeRestAPI_d.so)
+ELSE ()
+target_link_libraries(Test PRIVATE
+                        ${PROJECT_SOURCE_DIR}/target/release/libBeeRestAPI.so)
+ENDIF()
+
+
+# 指定构建顺序
+add_dependencies(Test BeeRestAPI)
