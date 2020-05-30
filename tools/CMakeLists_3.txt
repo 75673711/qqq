@@ -1,26 +1,27 @@
 cmake_minimum_required(VERSION 3.12)
 project(BeeRestAPI)
 
-# Ö¸¶¨release°æ±¾   Íâ²¿Ö´ĞĞÊ±Ö¸¶¨°æ±¾ cmake ./ -DCMAKE_BUILD_TYPE=Debug   Ä¬ÈÏrelease
+# æŒ‡å®šreleaseç‰ˆæœ¬   å¤–éƒ¨æ‰§è¡Œæ—¶æŒ‡å®šç‰ˆæœ¬ cmake ./ -DCMAKE_BUILD_TYPE=Debug   é»˜è®¤release
 #SET(CMAKE_BUILD_TYPE "Debug")
 
-# ±àÒë°æ±¾Ö¸Áî
-SET(CMAKE_CXX_FLAGS_DEBUG "$ENV{CXXFLAGS} -O0 -Wall -g -ggdb")
+# ç¼–è¯‘ç‰ˆæœ¬æŒ‡ä»¤  gcc é…ç½®
+#-Wl,--no-undefinedç¦æ­¢ç¬¦å·è¿æ¥å¤±è´¥æ—¶é€šè¿‡  -Wl,-rpath='$$ORIGIN/lib'  æŒ‡å®šè¿è¡Œä¾èµ–è·¯å¾„
+SET(CMAKE_CXX_FLAGS_DEBUG "$ENV{CXXFLAGS} -O0 -Wall -g -ggdb -Wl,--no-undefined") 
 SET(CMAKE_CXX_FLAGS_RELEASE "$ENV{CXXFLAGS} -O3 -Wall")
 
-# Ö¸¶¨±àÒëÑ¡Ïî
+# æŒ‡å®šç¼–è¯‘é€‰é¡¹
 add_compile_options(-std=c++11)
 
-# Ô¤ÖÃºê¶¨Òå
+# é¢„ç½®å®å®šä¹‰
 IF (CMAKE_BUILD_TYPE STREQUAL Debug)   
     ADD_DEFINITIONS(-DBLABLA)          
 ENDIF()
 
-# ÎÄ¼şºó×º  »òÕßÊôĞÔÖĞÉèÖÃDEBUG_POSTFIX
+# æ–‡ä»¶åç¼€  æˆ–è€…å±æ€§ä¸­è®¾ç½®DEBUG_POSTFIX
 set(CMAKE_DEBUG_POSTFIX "_d")
 set(CMAKE_RELEASE_POSTFIX "")
 
-# Ô´ÎÄ¼ş¼°Ä¿±ê   SHARED Ö¸¶¨¶¯Ì¬¿â  Ä¬ÈÏ¾²Ì¬¿â
+# æºæ–‡ä»¶åŠç›®æ ‡   SHARED æŒ‡å®šåŠ¨æ€åº“  é»˜è®¤é™æ€åº“
 #-----exe
 #add_executable(BeeRestAPI ${PROJECT_SOURCE_DIR}/src/tmp.cpp ${PROJECT_SOURCE_DIR}/src/tmp.h)
 #-----exe
@@ -30,18 +31,18 @@ set(CMAKE_RELEASE_POSTFIX "")
 ADD_DEFINITIONS(-DNEED_EXPORT)
 add_library(BeeRestAPI SHARED ${PROJECT_SOURCE_DIR}/src/tmp.cpp ${PROJECT_SOURCE_DIR}/src/tmp.h)
 
-# µ¼³ö·ûºÅ¿ØÖÆ  Ä¬ÈÏ²»µ¼³ö
+# å¯¼å‡ºç¬¦å·æ§åˆ¶  é»˜è®¤ä¸å¯¼å‡º
 set_target_properties(BeeRestAPI PROPERTIES
     CXX_VISIBILITY_PRESET "hidden"
     VISIBILITY_INLINES_HIDDEN "hidden"
     )
 
-# Í·ÎÄ¼ş
+# å¤´æ–‡ä»¶
 target_include_directories(BeeRestAPI PRIVATE
                                 ${PROJECT_SOURCE_DIR}/src
                                 /springcloud/demo/bin/include)
 
-# ÒÀÀµ¿â
+# ä¾èµ–åº“
 find_package(Threads)
 target_link_libraries(BeeRestAPI PRIVATE
                         ${CMAKE_THREAD_LIBS_INIT}
@@ -55,7 +56,7 @@ target_link_libraries(BeeRestAPI PRIVATE
 				        /springcloud/demo/bin/libs/BeeNet64_linux/libjsoncpp.so.1.8.4
 				        /springcloud/demo/bin/libs/BeeNet64_linux/libboost_thread.so.1.67.0)
 
-# Éú³ÉÂ·¾¶  ÔËĞĞ³ÌĞò  CMAKE_ARCHIVE_OUTPUT_DIRECTORY_DEBUG CMAKE_ARCHIVE_OUTPUT_DIRECTORY_RELEASE ¿â
+# ç”Ÿæˆè·¯å¾„  è¿è¡Œç¨‹åº  CMAKE_ARCHIVE_OUTPUT_DIRECTORY_DEBUG CMAKE_ARCHIVE_OUTPUT_DIRECTORY_RELEASE åº“
 IF (CMAKE_BUILD_TYPE STREQUAL Debug)   
     #set(RUNTIME_OUTPUT_DIRECTORY  ${PROJECT_SOURCE_DIR}/target/debug)   
 ENDIF()
@@ -63,7 +64,7 @@ IF (CMAKE_BUILD_TYPE STREQUAL Release)
     #set(RUNTIME_OUTPUT_DIRECTORY  ${PROJECT_SOURCE_DIR}/target/release)   
 ENDIF()
 
-# ÉèÖÃÊôĞÔ   ×¢ÒâÈç¹ûvalueÖµÎª¿Õ»òÕßÎ´¶¨Òå(Ã»ÓÃ"") Ôòvalue±»½âÊÍÎªkey µ¼ÖÂ´íÎó
+# è®¾ç½®å±æ€§   æ³¨æ„å¦‚æœvalueå€¼ä¸ºç©ºæˆ–è€…æœªå®šä¹‰(æ²¡ç”¨"") åˆ™valueè¢«è§£é‡Šä¸ºkey å¯¼è‡´é”™è¯¯
 IF (CMAKE_BUILD_TYPE STREQUAL Debug) 
 set_target_properties(BeeRestAPI PROPERTIES
     LIBRARY_OUTPUT_DIRECTORY "${PROJECT_SOURCE_DIR}/target/debug"
@@ -78,7 +79,7 @@ set_target_properties(BeeRestAPI PROPERTIES
     )
 ENDIF()
 
-# ²âÊÔÎÄ¼ş-------------------------------------
+# æµ‹è¯•æ–‡ä»¶-------------------------------------
 add_executable(Test ${PROJECT_SOURCE_DIR}/src/main.cpp)
 set_target_properties(Test PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${PROJECT_SOURCE_DIR}/test"
@@ -93,5 +94,5 @@ target_link_libraries(Test PRIVATE
 ENDIF()
 
 
-# Ö¸¶¨¹¹½¨Ë³Ğò
+# æŒ‡å®šæ„å»ºé¡ºåº
 add_dependencies(Test BeeRestAPI)
